@@ -49,3 +49,11 @@ Don't add heavy dependencies without asking. If one library would replace three,
 * No em dashes or en dashes. Use hyphens for year ranges (2015-2026).
 * No semicolons.
 * Plain, human language. No filler.
+
+## Always stop and ask before
+
+* Launching any Earth Engine batch export or task beyond the approved pilot, with an estimate of EECU-hours and size first
+* Any git push, or changing a repo's visibility
+* Deleting files or folders, including files in Google Drive
+* Changing system or user settings outside this repo (environment variables, PATH, installed software outside the rs-trends environment)
+* Any step expected to run longer than 30 minutes

@@ -1,0 +1,278 @@
+"""Earth Engine computation graphs: masking, harmonization, composites, samples, tasks.
+
+This is the only module in the package that talks to Earth Engine. Tests do not import it.
+QA bit positions and thresholds come from rstrends.qa and the config, so the server-side
+masks follow the same tested logic as the NumPy versions.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from typing import Any
+
+import ee
+
+from rstrends import qa
+from rstrends.harmonize import compose
+
+INDEX_BANDS = ["evi2", "nirv", "kndvi"]
+
+
+def initialize(project: str) -> None:
+    ee.Initialize(project=project)
+
+
+def asset_id(project: str, rel: str) -> str:
+    return f"projects/{project}/assets/{rel}"
+
+
+def ensure_folder(project: str, rel_folder: str) -> None:
+    path = asset_id(project, rel_folder)
+    try:
+        ee.data.getAsset(path)
+    except ee.EEException:
+        ee.data.createAsset({"type": "FOLDER"}, path)
+
+
+def asset_exists(path: str) -> bool:
+    try:
+        ee.data.getAsset(path)
+        return True
+    except ee.EEException:
+        return False
+
+
+# ---------- grid and study area ----------
+
+
+def grid(cfg: dict) -> tuple[str, list[float]]:
+    """CRS WKT and transform of the Annual NLCD grid, checked against the config."""
+    img = ee.Image(cfg["grid"]["reference_image"])
+    info = img.select(0).getInfo()["bands"][0]
+    transform = [float(v) for v in info["crs_transform"]]
+    expected = [float(v) for v in cfg["grid"]["crs_transform"]]
+    if transform != expected:
+        raise RuntimeError(f"NLCD grid transform {transform} differs from config {expected}")
+    return img.projection().wkt().getInfo(), transform
+
+
+def province(gpkg_path) -> ee.FeatureCollection:
+    """Province polygon from the local GeoPackage written by 01_boundary.py.
+
+    Sent as client-side geometry (about 0.4 MB). Source edges are straight lines in
+    geographic coordinates, so geodesic=False. NAD83 to WGS84 differs by about 1 m here,
+    far below the 1:3,500,000 presentation scale of the source map.
+    """
+    import geopandas as gpd
+
+    g = gpd.read_file(gpkg_path).to_crs(4326).geometry.iloc[0]
+    geom = ee.Geometry(g.__geo_interface__, "EPSG:4326", False)
+    return ee.FeatureCollection([ee.Feature(geom, {"code": "255"})])
+
+
+def province_mask(fc: ee.FeatureCollection) -> ee.Image:
+    """1 inside the province, masked outside."""
+    return ee.Image().byte().paint(fc, 1)
+
+
+# ---------- per-observation preparation ----------
+
+
+def prep(img: ee.Image, family: str, cfg: dict) -> ee.Image:
+    """Scale red and NIR to reflectance and mask unusable observations.
+
+    Returns bands red, nir (masked where not clear) and acq (1 wherever the scene has data,
+    used for the total acquisition count).
+    """
+    b = qa.SENSOR_BANDS[family]
+    qap = img.select("QA_PIXEL")
+    clear = qap.bitwiseAnd(qa.bits_to_mask(qa.qa_pixel_mask_bits(family))).eq(0)
+    unsat = img.select("QA_RADSAT").bitwiseAnd(qa.bits_to_mask(b["radsat_bits"])).eq(0)
+    red = img.select(b["red"]).multiply(qa.SR_SCALE).add(qa.SR_OFFSET)
+    nir = img.select(b["nir"]).multiply(qa.SR_SCALE).add(qa.SR_OFFSET)
+    ok = clear.And(unsat).And(red.gte(0)).And(red.lte(1)).And(nir.gte(0)).And(nir.lte(1))
+    if family == "OLI":
+        if cfg["qa"]["drop_high_aerosol"]:
+            level = img.select("SR_QA_AEROSOL").rightShift(qa.AEROSOL_LEVEL_SHIFT).bitwiseAnd(3)
+            ok = ok.And(level.neq(qa.AEROSOL_LEVEL_HIGH))
+    else:
+        op = img.select("SR_ATMOS_OPACITY").unmask(-1)
+        ok = ok.And(op.multiply(qa.OPACITY_SCALE).lte(cfg["qa"]["max_atmos_opacity"]).Or(op.lt(0)))
+    acq = qap.bitwiseAnd(1 << qa.QA_FILL).eq(0).rename("acq")
+    refl = red.rename("red").addBands(nir.rename("nir")).updateMask(ok)
+    return refl.addBands(acq).copyProperties(img, ["system:time_start"])
+
+
+def add_indices(img: ee.Image) -> ee.Image:
+    red, nir = img.select("red"), img.select("nir")
+    ndvi = nir.subtract(red).divide(nir.add(red))
+    evi2 = nir.subtract(red).multiply(2.5).divide(nir.add(red.multiply(2.4)).add(1))
+    nirv = ndvi.multiply(nir)
+    kndvi = ndvi.pow(2).tanh()
+    return (
+        img.addBands(evi2.rename("evi2"))
+        .addBands(nirv.rename("nirv"))
+        .addBands(kndvi.rename("kndvi"))
+    )
+
+
+def apply_linear(img: ee.Image, coeffs: dict[str, tuple[float, float]]) -> ee.Image:
+    """Apply per-band (slope, intercept) to red and NIR, keeping other bands."""
+    red = img.select("red").multiply(coeffs["red"][0]).add(coeffs["red"][1])
+    nir = img.select("nir").multiply(coeffs["nir"][0]).add(coeffs["nir"][1])
+    return img.addBands(red.rename("red"), overwrite=True).addBands(
+        nir.rename("nir"), overwrite=True
+    )
+
+
+def to_oli_coefficients(
+    harm: dict | None, family: str, year: int
+) -> dict[str, tuple[float, float]] | None:
+    """Per-band (slope, intercept) taking a family's reflectance to OLI-equivalent.
+
+    harm layout: {"etm_to_oli": {"red": [s, i], "nir": [s, i]},
+                  "tm_to_etm": {"2000": {"red": [s, i], "nir": [s, i]}, ...}}
+    """
+    if harm is None or family == "OLI":
+        return None
+    e2o = harm["etm_to_oli"]
+    if family == "ETM":
+        return {b: tuple(e2o[b]) for b in ("red", "nir")}
+    t2e = harm["tm_to_etm"][str(year)]
+    return {b: compose(tuple(t2e[b]), tuple(e2o[b])) for b in ("red", "nir")}
+
+
+# ---------- collections ----------
+
+
+def _date(s: str) -> dt.date:
+    return dt.date.fromisoformat(s)
+
+
+def sensor_window(cfg: dict, key: str, year: int) -> tuple[str, str] | None:
+    """Date window [start, end) for one sensor in one year's season, or None if it has no data."""
+    s = cfg["sensors"][key]
+    season_start = _date(f"{year}-{cfg['season']['start_month_day']}")
+    season_end = _date(f"{year}-{cfg['season']['end_month_day']}") + dt.timedelta(days=1)
+    start = max(season_start, _date(s["start"]))
+    end = min(season_end, _date(s["end"]) + dt.timedelta(days=1))
+    if s["family"] == "ETM":
+        end = min(end, _date(cfg["sensors"]["landsat7_cutoff"]))
+    if start >= end:
+        return None
+    return start.isoformat(), end.isoformat()
+
+
+def sensor_keys(cfg: dict) -> list[str]:
+    return [k for k, v in cfg["sensors"].items() if isinstance(v, dict)]
+
+
+def sensor_collection(cfg: dict, key: str, year: int, region: ee.Geometry, window=None):
+    """Prepared (masked, scaled, not harmonized) collection for one sensor and year."""
+    win = window or sensor_window(cfg, key, year)
+    if win is None:
+        return None
+    s = cfg["sensors"][key]
+    fam = s["family"]
+    return (
+        ee.ImageCollection(s["collection"])
+        .filterBounds(region)
+        .filterDate(win[0], win[1])
+        .map(lambda im: prep(im, fam, cfg))
+    )
+
+
+def year_observations(cfg: dict, year: int, region: ee.Geometry, harm: dict | None):
+    """All harmonized observations for one year's season with indices added."""
+    parts = []
+    for key in sensor_keys(cfg):
+        col = sensor_collection(cfg, key, year, region)
+        if col is None:
+            continue
+        coeffs = to_oli_coefficients(harm, cfg["sensors"][key]["family"], year)
+        if coeffs is not None:
+            col = col.map(lambda im, c=coeffs: apply_linear(im, c))
+        parts.append(col)
+    if not parts:
+        raise ValueError(f"no sensors cover the {year} season")
+    merged = parts[0]
+    for p in parts[1:]:
+        merged = merged.merge(p)
+    return merged.map(add_indices)
+
+
+def annual_composite(cfg: dict, year: int, fc: ee.FeatureCollection, harm: dict | None):
+    """Main stack for one year as int16: evi2, nirv, kndvi (x scale), sub-season counts, n_acq."""
+    region = fc.geometry().bounds()
+    obs = year_observations(cfg, year, region, harm)
+    scale = cfg["indices"]["storage_scale"]
+    med = obs.select(INDEX_BANDS).median().multiply(scale).round().toInt16()
+    counts = []
+    for name, (a, b) in cfg["season"]["sub_seasons"].items():
+        end = _date(f"{year}-{b}") + dt.timedelta(days=1)
+        n = obs.filterDate(f"{year}-{a}", end.isoformat()).select("evi2").count()
+        counts.append(n.unmask(0).toInt16().rename(f"n_{name}"))
+    n_acq = obs.select("acq").sum().unmask(0).toInt16().rename("n_acq")
+    out = med.rename(INDEX_BANDS).addBands(counts).addBands(n_acq)
+    return out.updateMask(province_mask(fc)).set("year", year)
+
+
+# ---------- harmonization sample ----------
+
+
+def stable_landcover(cfg: dict, y0: int, y1: int) -> ee.Image:
+    """Annual NLCD class where the class is unchanged in every year y0..y1, else masked."""
+    ic = ee.ImageCollection(cfg["land_cover_collection"]).filter(
+        ee.Filter.rangeContains("year", y0, y1)
+    )
+    n = ic.size().getInfo()
+    if n != y1 - y0 + 1:
+        raise RuntimeError(f"expected {y1 - y0 + 1} Annual NLCD years, found {n}")
+    stack = ic.select([0])
+    stable = stack.min().eq(stack.max())
+    lc = stack.min().rename("lc")
+    keep = stable
+    for c in cfg["harmonization"]["exclude_classes"]:
+        keep = keep.And(lc.neq(c))
+    return lc.updateMask(keep)
+
+
+def common_window(cfg: dict, key_a: str, key_b: str, year: int) -> tuple[str, str]:
+    """Overlap of two sensors' windows in one season, so both medians cover the same dates."""
+    wa, wb = sensor_window(cfg, key_a, year), sensor_window(cfg, key_b, year)
+    if wa is None or wb is None:
+        raise ValueError(f"{key_a} and {key_b} do not overlap in {year}")
+    start, end = max(wa[0], wb[0]), min(wa[1], wb[1])
+    if start >= end:
+        raise ValueError(f"{key_a} and {key_b} do not overlap in {year}")
+    return start, end
+
+
+def sensor_medians(cfg: dict, key: str, year: int, region: ee.Geometry, prefix: str, window=None):
+    col = sensor_collection(cfg, key, year, region, window)
+    if col is None:
+        raise ValueError(f"{key} has no data in the {year} season")
+    med = col.select(["red", "nir"]).median().rename([f"{prefix}_red", f"{prefix}_nir"])
+    n = col.select("red").count().rename(f"{prefix}_n")
+    return med.addBands(n)
+
+
+# ---------- tasks ----------
+
+
+def operation_summary(project: str, task_id: str) -> dict[str, Any]:
+    """State, timing, and EECU use of one batch task."""
+    op = ee.data.getOperation(f"projects/{project}/operations/{task_id}")
+    md = op.get("metadata", {})
+    return {
+        "task_id": task_id,
+        "description": md.get("description"),
+        "state": md.get("state"),
+        "create": md.get("createTime"),
+        "start": md.get("startTime"),
+        "end": md.get("endTime"),
+        "eecu_seconds": md.get("batchEecuUsageSeconds"),
+        "progress": md.get("progress"),
+        "destination": md.get("destinationUris"),
+        "error": op.get("error", {}).get("message"),
+    }

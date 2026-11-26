@@ -21,7 +21,9 @@ def cfg():
 
 def test_repo_config_is_valid(cfg):
     assert n_years(cfg) == cfg["period"]["end_year"] - cfg["period"]["start_year"] + 1
-    assert cfg["grid"]["crs"] == "EPSG:5070"
+    # 30 m north-up grid on the Annual NLCD origin
+    a, b, _, d, e, _ = cfg["grid"]["crs_transform"]
+    assert (a, b, d, e) == (30, 0, 0, -30)
 
 
 def test_config_holds_no_project_id(cfg):
