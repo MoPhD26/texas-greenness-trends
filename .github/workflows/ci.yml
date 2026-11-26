@@ -48,7 +48,8 @@ jobs:
           environment-file: environment.yml
           activate-environment: rs-trends
           channel-priority: strict
-          auto-activate-base: false
+          conda-remove-defaults: "true"
+          auto-activate: false
 
       - name: Ruff lint
         run: ruff check .
