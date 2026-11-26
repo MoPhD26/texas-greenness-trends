@@ -38,6 +38,7 @@ sensors:
 qa:
   max_atmos_opacity: 0.3           # TM and ETM+ SR_ATMOS_OPACITY, scaled. Above 0.3 is hazy (EE catalog)
   drop_high_aerosol: true          # OLI SR_QA_AEROSOL level 3 (USGS cautions against these pixels)
+  max_scene_cloud_cover_land: 90   # skip scenes above this CLOUD_COVER_LAND percent (cost cut)
 
 harmonization:
   method: "rma"                    # reduced major axis regression
@@ -104,6 +105,17 @@ export:
   pilot_year: 2012
   nodata: -32768                   # all bands exported as int16, counts included
   file_dimensions: 32768           # max tile edge in pixels per output GeoTIFF
+  filter_buffer_m: 1000            # scenes are filtered by the province outline plus this buffer
+  main_indices: ["evi2"]           # province-wide index bands. NIRv and kNDVI run on a sample.
+  # Single-sensor subsets, folded into the yearly tasks as extra bands (sensitivity check a)
+  subsets:
+    etm: {family: "ETM", years: [2000, 2019]}
+    oli: {family: "OLI", years: [2013, 2019]}
+
+index_checks:
+  indices: ["nirv", "kndvi"]
+  sample_fraction: 0.10            # share of 512 x 512 chunks, drawn at random
+  seed: 2026
 
 paths:
   data_dir: "C:/rsdata"            # overridden by the RS_DATA_DIR environment variable

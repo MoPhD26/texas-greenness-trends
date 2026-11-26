@@ -6,7 +6,7 @@ Where did vegetation greenness change across Bailey's Prairie Parkland (Subtropi
 
 ## Approach in one paragraph
 
-Landsat 5, 7, 8, and 9 Collection 2 surface reflectance, harmonized across sensors, is composited into a March-October median EVI2 for every 30 m pixel and year. Per-pixel trends use the Theil-Sen slope with a Mann-Kendall test corrected for autocorrelation, and false discoveries are controlled across 231 million pixels. Trends are summarized on stable Annual NLCD land cover pixels and compared with drought (SPEI) through residual trend analysis. The full plan, literature review, and design decisions are in [docs/phase1_plan.md](docs/phase1_plan.md).
+Landsat 5, 7, 8, and 9 Collection 2 surface reflectance, harmonized across sensors, is composited into a March-October median EVI2 for every 30 m pixel and year. Per-pixel trends use the Theil-Sen slope with a Mann-Kendall test corrected for autocorrelation, and false discoveries are controlled across 274 million pixels. Trends are summarized on stable Annual NLCD land cover pixels and compared with drought (SPEI) through residual trend analysis. The full plan, literature review, and design decisions are in [docs/phase1_plan.md](docs/phase1_plan.md).
 
 ## Repository layout
 

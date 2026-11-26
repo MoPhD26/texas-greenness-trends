@@ -5,7 +5,10 @@
   --status         show state, run time, and EECU-hours of every submitted task
 
 Each year is one export task, written as int16 Cloud Optimized GeoTIFF tiles on the Annual
-NLCD grid. Bands: evi2, nirv, kndvi (x storage_scale), n_spring, n_summer, n_fall, n_acq.
+NLCD grid, computed in a single pass over the scenes. Bands (rstrends.batches.export_bands):
+evi2 (x storage_scale) and sub-season clear counts, plus etm_* bands for 2000-2019 and oli_*
+bands for 2013-2019 (the single-sensor subsets). The pilot (P) used the earlier
+seven-band design. Requires final harmonization coefficients.
 
 Run:
   conda run -n rs-trends python src/03_export.py --batch P
@@ -61,13 +64,21 @@ def main() -> None:
                     f"refusing {name}: pilot not run or batches not yet verified: {pending}"
                 )
         harm_path = root / "outputs" / "harmonization" / "coefficients.json"
+        if not harm_path.exists():
+            raise SystemExit(
+                "no final harmonization coefficients. Review the draft, then --finalize."
+            )
         harm = json.loads(harm_path.read_text(encoding="utf-8"))
-        fc = gee.province(root / "raw" / "boundary" / "province255.gpkg")
+        if harm.get("status") != "final":
+            raise SystemExit("coefficients.json is not marked final")
+        gpkg = root / "raw" / "boundary" / "province255.gpkg"
+        fc = gee.province(gpkg)
+        filt = gee.filter_geometry(gpkg, cfg["export"]["filter_buffer_m"])
         wkt, transform = gee.grid(cfg)
         folder = f"{cfg['export']['drive_folder_prefix']}{name}"
         ids = []
         for year in batches[name]:
-            img = gee.annual_composite(cfg, year, fc, harm)
+            img = gee.annual_composite_single_pass(cfg, year, fc, filt, harm)
             desc = f"{name}_main_{year}"
             task = ee.batch.Export.image.toDrive(
                 image=img,

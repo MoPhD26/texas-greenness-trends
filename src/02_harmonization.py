@@ -8,8 +8,10 @@ Steps (each resumes where it stopped):
   --submit   the same sample as Earth Engine batch table exports to Google Drive (folder
              rs_trends_H), one task per year. Batch tasks report EECU-hours. Download the CSVs
              to <data>/incoming/H before --fit.
-  --fit      fit ETM+ to OLI (pooled 2013-2017) and TM to ETM+ (one fit per year 2000-2011),
-             RMA primary and OLS for comparison, with cluster-bootstrap confidence intervals
+  --fit      fit ETM+ to OLI (pooled 2013-2017, plus each year alone for comparison) and TM to
+             ETM+ (one fit per year 2000-2011). RMA primary, OLS for comparison, cluster-bootstrap
+             confidence intervals, n, r, R2, RMSE, and scatter diagnostics. Writes a draft only.
+  --finalize promote the reviewed draft to coefficients.json, which the exports read
 
 Run:
   conda run -n rs-trends python src/02_harmonization.py --points --sample --fit
@@ -29,7 +31,7 @@ import shapely
 
 from rstrends import indices, tasklog
 from rstrends.config import data_dir, ee_project, load_config
-from rstrends.harmonize import allocate, fit_linear
+from rstrends.harmonize import allocate, fit_linear, fit_stats
 
 CANDIDATE_FACTOR = 6  # candidates drawn per final point, so rare classes reach their floor
 BATCH = 2500  # points per interactive Earth Engine request
@@ -54,7 +56,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--points", action="store_true")
     ap.add_argument("--sample", action="store_true")
-    ap.add_argument("--fit", action="store_true")
+    ap.add_argument("--fit", action="store_true", help="fit and write draft coefficients")
+    ap.add_argument("--finalize", action="store_true", help="promote the reviewed draft")
     ap.add_argument("--submit", action="store_true", help="batch table exports to Drive")
     ap.add_argument("--years", type=int, nargs="*", help="limit --sample to these years")
     ap.add_argument("--workers", type=int, default=6, help="parallel interactive requests")
@@ -101,18 +104,61 @@ def main() -> None:
             )
             return ee.data.computeFeatures({"expression": fc, "fileFormat": "PANDAS_DATAFRAME"})
 
-        def run_batches(image, pts, props, label):
+        def run_batches(image, pts, props, label, parts_dir=None):
+            """Sample in chunks of BATCH points, in parallel.
+
+            With parts_dir, each chunk is saved as soon as it arrives and chunks already on
+            disk are skipped, so a failure only repeats the failed chunks. Returns None if
+            any chunk failed.
+            """
             parts = [pts.iloc[i : i + BATCH] for i in range(0, len(pts), BATCH)]
-            out, t0 = [], time.perf_counter()
+            if parts_dir is not None:
+                parts_dir.mkdir(parents=True, exist_ok=True)
+
+            def part_path(k):
+                return None if parts_dir is None else parts_dir / f"part_{k:02d}.csv"
+
+            todo = [
+                k for k in range(len(parts)) if part_path(k) is None or not part_path(k).exists()
+            ]
+            out, failed, t0 = {}, [], time.perf_counter()
+
+            def one(k):
+                for attempt in range(1, 4):
+                    try:
+                        return sample_df(image, parts[k], props)
+                    except Exception as exc:  # network or Earth Engine error: retry this chunk
+                        print(
+                            f"     {label}: chunk {k} attempt {attempt} failed: {exc}", flush=True
+                        )
+                        time.sleep(5 * attempt)
+                raise RuntimeError(f"chunk {k} failed 3 times")
+
             with ThreadPoolExecutor(max_workers=args.workers) as ex:
-                futs = {ex.submit(sample_df, image, p, props): k for k, p in enumerate(parts)}
-                for done, fut in enumerate(as_completed(futs), start=1):
-                    out.append(fut.result())
-                    if done % 10 == 0:
-                        el = time.perf_counter() - t0
-                        print(f"     {label}: {done}/{len(parts)} ({el:.0f} s)", flush=True)
-            print(f"     {label}: {len(parts)} requests in {time.perf_counter() - t0:.0f} s")
-            return pd.concat(out, ignore_index=True)
+                futs = {ex.submit(one, k): k for k in todo}
+                for fut in as_completed(futs):
+                    k = futs[fut]
+                    try:
+                        df = fut.result()
+                    except RuntimeError:
+                        failed.append(k)
+                        continue
+                    if parts_dir is not None:
+                        df.to_csv(part_path(k), index=False)
+                    out[k] = df
+            el = time.perf_counter() - t0
+            print(
+                f"     {label}: {len(todo)} of {len(parts)} chunks requested, {el:.0f} s, "
+                f"failed {failed}",
+                flush=True,
+            )
+            if failed:
+                return None
+            if parts_dir is not None:
+                return pd.concat(
+                    [pd.read_csv(part_path(k)) for k in range(len(parts))], ignore_index=True
+                )
+            return pd.concat(out.values(), ignore_index=True)
 
     if args.points and not points_csv.exists():
         y0, y1 = h["stable_years"]
@@ -216,9 +262,16 @@ def main() -> None:
             img = gee.sensor_medians(cfg, ka, year, fc_region, pa, win).addBands(
                 gee.sensor_medians(cfg, kb, year, fc_region, pb, win)
             )
-            df = run_batches(img, pts, ["pid", "lc"], f"{pa}->{pb} {year}")
+            parts_dir = work / "parts" / f"{pa}_{pb}_{year}"
+            df = run_batches(img, pts, ["pid", "lc"], f"{pa}->{pb} {year} {win}", parts_dir)
+            if df is None:
+                print(f"FAIL {pa}->{pb} {year}: rerun to retry only the failed chunks")
+                continue
             df["year"] = year
+            df["window_start"], df["window_end"] = win
+            df.drop(columns=[c for c in ("geo",) if c in df], inplace=True)
             df.to_csv(path, index=False)
+            print(f"ok   {path.name}: {len(df)} rows", flush=True)
 
     def find_sample(name: str):
         """Batch CSV downloaded from Drive (incoming/H) if present, else the interactive copy."""
@@ -232,75 +285,136 @@ def main() -> None:
         return pd.read_csv(find_sample(name))
 
     if args.fit:
-        # Fit with the years available. Missing years make the result provisional.
-        all_etm, all_tm = etm_years, tm_years
-        etm_years = [y for y in all_etm if find_sample(f"sample_etm_oli_{y}.csv")]
-        tm_years = [y for y in all_tm if find_sample(f"sample_tm_etm_{y}.csv")]
-        if not etm_years:
-            raise SystemExit("no ETM+ to OLI samples yet")
-        provisional = etm_years != all_etm or tm_years != all_tm
         nmin = h["min_clear_obs_per_sensor"]
         nb, seed = h["n_boot"], h["seed"]
-        rows, coeffs = [], {"etm_to_oli": {}, "tm_to_etm": {}}
+        missing = [
+            n
+            for n in [f"sample_etm_oli_{y}.csv" for y in etm_years]
+            + [f"sample_tm_etm_{y}.csv" for y in tm_years]
+            if find_sample(n) is None
+        ]
+        if missing:
+            raise SystemExit(f"samples missing, fit not run: {missing}")
+        rows, diag = [], []
+        draft = {"etm_to_oli": {}, "tm_to_etm": {}}
 
         def usable(df, a, b):
             need = [f"{q}_{k}" for q in (a, b) for k in ("red", "nir", "n")]
             return df[(df[f"{a}_n"] >= nmin) & (df[f"{b}_n"] >= nmin)].dropna(subset=need)
 
-        def record(name, year, df, src, tgt, fits_rma, fits_ols):
+        def fit_row(name, label, df, src, tgt, boot=True):
+            out, fits = {}, {}
             ev_src = indices.evi2(df[f"{src}_red"], df[f"{src}_nir"])
             ev_tgt = indices.evi2(df[f"{tgt}_red"], df[f"{tgt}_nir"])
-            ev_adj = indices.evi2(
-                fits_rma["red"].apply(df[f"{src}_red"]), fits_rma["nir"].apply(df[f"{src}_nir"])
-            )
             for band in ("red", "nir"):
-                for method, f in (("rma", fits_rma[band]), ("ols", fits_ols[band])):
-                    rows.append(
+                x, y = df[f"{src}_{band}"], df[f"{tgt}_{band}"]
+                g = df["pid"]
+                k = nb if boot else 0
+                rma = fit_linear(x, y, "rma", groups=g, n_boot=k, seed=seed)
+                ols = fit_linear(x, y, "ols", groups=g, n_boot=k, seed=seed)
+                st_r, st_o = fit_stats(x, y, rma), fit_stats(x, y, ols)
+                fits[band] = rma
+                rows.append(
+                    {
+                        "transform": name,
+                        "years": label,
+                        "band": band,
+                        "n": st_r["n"],
+                        "n_points": df["pid"].nunique(),
+                        "r": st_r["r"],
+                        "r2": st_r["r2"],
+                        "ols_slope": ols.slope,
+                        "ols_intercept": ols.intercept,
+                        "rmse_ols": st_o["rmse"],
+                        "rma_slope": rma.slope,
+                        "rma_slope_lo": rma.slope_ci[0] if rma.slope_ci else np.nan,
+                        "rma_slope_hi": rma.slope_ci[1] if rma.slope_ci else np.nan,
+                        "rma_intercept": rma.intercept,
+                        "rma_intercept_lo": rma.intercept_ci[0] if rma.intercept_ci else np.nan,
+                        "rma_intercept_hi": rma.intercept_ci[1] if rma.intercept_ci else np.nan,
+                        "rmse_rma": st_r["rmse"],
+                        "evi2_offset_before": float(np.mean(ev_tgt - ev_src)),
+                    }
+                )
+                out[band] = [rma.slope, rma.intercept]
+            ev_adj = indices.evi2(
+                fits["red"].apply(df[f"{src}_red"]), fits["nir"].apply(df[f"{src}_nir"])
+            )
+            for r in rows[-2:]:
+                r["evi2_offset_after"] = float(np.mean(ev_tgt - ev_adj))
+            return out
+
+        def diagnostics(df, src, tgt, label):
+            """Correlation by clear-count bin and by land cover class, to explain scatter."""
+            m = np.minimum(df[f"{src}_n"], df[f"{tgt}_n"])
+            bins = pd.cut(m, [nmin - 1, 5, 9, 14, 1000], labels=["4-5", "6-9", "10-14", "15+"])
+            groups = [("min_clear_obs", k, g) for k, g in df.groupby(bins, observed=True)]
+            groups += [("nlcd_class", k, g) for k, g in df.groupby("lc")]
+            for band in ("red", "nir"):
+                for kind, key, grp in groups:
+                    if len(grp) < 30:
+                        continue
+                    x, y = grp[f"{src}_{band}"], grp[f"{tgt}_{band}"]
+                    diag.append(
                         {
-                            "transform": name,
-                            "year": year,
+                            "fit": label,
                             "band": band,
-                            "method": method,
-                            "slope": f.slope,
-                            "slope_lo": f.slope_ci[0],
-                            "slope_hi": f.slope_ci[1],
-                            "intercept": f.intercept,
-                            "intercept_lo": f.intercept_ci[0],
-                            "intercept_hi": f.intercept_ci[1],
-                            "r": f.r,
-                            "n_pairs": f.n,
-                            "n_points": df["pid"].nunique(),
-                            "evi2_offset_before": float(np.mean(ev_tgt - ev_src)),
-                            "evi2_offset_after": float(np.mean(ev_tgt - ev_adj)),
+                            "group_type": kind,
+                            "group": key,
+                            "n": len(grp),
+                            "r": float(np.corrcoef(x, y)[0, 1]),
+                            "rma_slope": fit_linear(x, y, "rma").slope,
+                            "ols_slope": fit_linear(x, y, "ols").slope,
+                            "median_abs_diff": float(np.median(np.abs(y - x))),
                         }
                     )
 
-        etm = pd.concat(
-            [read_sample(f"sample_etm_oli_{y}.csv") for y in etm_years], ignore_index=True
-        )
-        etm = usable(etm, "etm", "oli")
-        rma = fit_pairs(etm, "etm", "oli", "rma", nb, seed)
-        ols = fit_pairs(etm, "etm", "oli", "ols", nb, seed)
-        record("etm_to_oli", f"{etm_years[0]}-{etm_years[-1]}", etm, "etm", "oli", rma, ols)
-        coeffs["etm_to_oli"] = {b: [rma[b].slope, rma[b].intercept] for b in ("red", "nir")}
+        etm_all = []
+        for y in etm_years:
+            df = usable(read_sample(f"sample_etm_oli_{y}.csv"), "etm", "oli")
+            fit_row("etm_to_oli", str(y), df, "etm", "oli", boot=False)
+            etm_all.append(df)
+        etm = pd.concat(etm_all, ignore_index=True)
+        label = f"{etm_years[0]}-{etm_years[-1]} pooled"
+        draft["etm_to_oli"] = fit_row("etm_to_oli", label, etm, "etm", "oli")
+        diagnostics(etm, "etm", "oli", f"etm_to_oli {label}")
         for y in tm_years:
             tm = usable(read_sample(f"sample_tm_etm_{y}.csv"), "tm", "etm")
-            rma = fit_pairs(tm, "tm", "etm", "rma", nb, seed)
-            ols = fit_pairs(tm, "tm", "etm", "ols", nb, seed)
-            record("tm_to_etm", str(y), tm, "tm", "etm", rma, ols)
-            coeffs["tm_to_etm"][str(y)] = {b: [rma[b].slope, rma[b].intercept] for b in rma}
+            draft["tm_to_etm"][str(y)] = fit_row("tm_to_etm", str(y), tm, "tm", "etm")
+            diagnostics(tm, "tm", "etm", f"tm_to_etm {y}")
         table = pd.DataFrame(rows)
-        table.to_csv(out_dir / "coefficients_table.csv", index=False)
-        coeffs["method"] = "rma"
-        coeffs["etm_to_oli_years"] = etm_years
-        coeffs["provisional"] = provisional
-        if provisional:
-            print(f"NOTE provisional fit: ETM+ years {etm_years}, TM years {tm_years}")
-        coeffs["note"] = f"fitted on point-years with >= {nmin} clear obs per sensor"
-        (out_dir / "coefficients.json").write_text(json.dumps(coeffs, indent=2), encoding="utf-8")
-        pd.set_option("display.width", 200)
-        print(table.round(4).to_string(index=False))
-        print(f"ok   wrote {out_dir / 'coefficients.json'}")
+        table.to_csv(out_dir / "fit_table.csv", index=False)
+        pd.DataFrame(diag).to_csv(out_dir / "fit_diagnostics.csv", index=False)
+        draft["method"] = "rma"
+        draft["status"] = "draft, not reviewed"
+        draft["note"] = f"point-years with >= {nmin} clear obs per sensor, common date window"
+        out_path = out_dir / "coefficients_draft.json"
+        out_path.write_text(json.dumps(draft, indent=2), encoding="utf-8")
+        pd.set_option("display.width", 250)
+        cols = [
+            "transform",
+            "years",
+            "band",
+            "n",
+            "r",
+            "r2",
+            "ols_slope",
+            "rma_slope",
+            "rma_intercept",
+            "rmse_ols",
+            "rmse_rma",
+            "evi2_offset_before",
+            "evi2_offset_after",
+        ]
+        print(table[cols].round(4).to_string(index=False))
+        print(f"ok   wrote {out_path} (draft, exports will not use it)")
+
+    if args.finalize:
+        draft = json.loads((out_dir / "coefficients_draft.json").read_text(encoding="utf-8"))
+        draft["status"] = "final"
+        draft["finalized_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        (out_dir / "coefficients.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
+        print(f"ok   finalized {out_dir / 'coefficients.json'}")
 
 
 if __name__ == "__main__":

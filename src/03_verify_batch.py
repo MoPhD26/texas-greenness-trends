@@ -16,15 +16,27 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import re
 import shutil
 import zipfile
 
 import pyproj
 import rasterio
 
+from rstrends.batches import export_bands
 from rstrends.config import data_dir, ee_project, load_config
 
-EXPECTED_BANDS = 7
+PILOT_BANDS = 7  # the pilot used the earlier design: 3 indices, 3 counts, acquisitions
+
+
+def expected_bands(cfg: dict, batch: str, filename: str) -> int:
+    """Band count for one file, from the year in its name (main_YYYY...)."""
+    if batch == "P":
+        return PILOT_BANDS
+    m = re.search(r"main_(\d{4})", filename)
+    if not m:
+        raise SystemExit(f"cannot read the year from {filename}")
+    return len(export_bands(cfg, int(m.group(1))))
 
 
 def sha256(path) -> str:
@@ -60,7 +72,7 @@ def main() -> None:
     a, _, x0, _, e, y0 = transform
     nodata = cfg["export"]["nodata"]
 
-    problems, rows, total_bytes, total_px = [], [], 0, 0
+    problems, rows, total_bytes, total_px, raw_bytes = [], [], 0, 0, 0
     for path in tifs:
         with rasterio.open(path) as src:
             t = src.transform
@@ -70,8 +82,10 @@ def main() -> None:
                 problems.append(f"{path.name}: pixel size {t.a},{t.e} is not 30 m north-up")
             if (t.c - x0) % a or (t.f - y0) % abs(e):
                 problems.append(f"{path.name}: origin not aligned to the NLCD grid")
-            if src.count != EXPECTED_BANDS:
-                problems.append(f"{path.name}: {src.count} bands, expected {EXPECTED_BANDS}")
+            nb = expected_bands(cfg, args.batch, path.name)
+            if src.count != nb:
+                problems.append(f"{path.name}: {src.count} bands, expected {nb}")
+            raw_bytes += src.width * src.height * nb * 2
             if set(src.dtypes) != {"int16"}:
                 problems.append(f"{path.name}: data types {set(src.dtypes)}")
             if src.nodata != nodata:
@@ -89,7 +103,6 @@ def main() -> None:
             }
         )
 
-    raw_bytes = total_px * EXPECTED_BANDS * 2
     print(f"files: {len(tifs)}, on disk {total_bytes / 1e9:.2f} GB, grid {total_px / 1e6:.0f} M px")
     print(f"uncompressed bbox {raw_bytes / 1e9:.2f} GB, ratio {total_bytes / raw_bytes:.3f}")
     if problems:

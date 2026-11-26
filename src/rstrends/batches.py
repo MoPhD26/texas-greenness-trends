@@ -16,3 +16,32 @@ def main_batches(cfg: dict) -> dict[str, list[int]]:
     for k, b in enumerate(blocks, start=1):
         out[f"B{k}"] = b
     return out
+
+
+SUB_SEASON_PREFIX = "n_"
+
+
+def export_bands(cfg: dict, year: int) -> list[str]:
+    """Band names of one year's main export, in order.
+
+    Main index bands and sub-season clear counts, then for each single-sensor subset that
+    covers the year, its EVI2 and its own sub-season counts.
+    """
+    seasons = list(cfg["season"]["sub_seasons"])
+    bands = list(cfg["export"]["main_indices"]) + [f"{SUB_SEASON_PREFIX}{s}" for s in seasons]
+    for name, sub in cfg["export"]["subsets"].items():
+        y0, y1 = sub["years"]
+        if y0 <= year <= y1:
+            bands += [f"{name}_evi2"] + [f"{name}_{SUB_SEASON_PREFIX}{s}" for s in seasons]
+    return bands
+
+
+def sample_chunks(keys: list[str], fraction: float, seed: int) -> list[str]:
+    """Random sample of chunk keys for the NIRv and kNDVI checks, reproducible from the seed."""
+    import numpy as np
+
+    if not 0 < fraction <= 1:
+        raise ValueError("fraction must be in (0, 1]")
+    n = max(1, round(len(keys) * fraction))
+    rng = np.random.default_rng(seed)
+    return sorted(rng.choice(sorted(keys), size=n, replace=False).tolist())

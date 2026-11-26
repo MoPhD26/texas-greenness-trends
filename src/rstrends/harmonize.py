@@ -123,3 +123,22 @@ def allocate(class_counts: pd.Series, total: int, floor: int) -> pd.Series:
             floor, (alloc[over] - excess * alloc[over] / alloc[over].sum()).round().astype(int)
         )
     return alloc.astype(int)
+
+
+def fit_stats(x, y, fit: LinearFit) -> dict[str, float]:
+    """Agreement of target y with the transformed source x.
+
+    r and R2 (= r squared, the share of target variance explained by a linear relation) do not
+    depend on the method. RMSE and bias are of y minus the transformed x, so they show how
+    well each method's line reproduces the target.
+    """
+    x, y = _clean(x, y)
+    resid = y - fit.apply(x)
+    r = float(np.corrcoef(x, y)[0, 1])
+    return {
+        "n": int(x.size),
+        "r": r,
+        "r2": r * r,
+        "rmse": float(np.sqrt(np.mean(resid**2))),
+        "bias": float(np.mean(resid)),
+    }

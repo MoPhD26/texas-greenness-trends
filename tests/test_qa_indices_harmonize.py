@@ -106,3 +106,18 @@ def test_allocate_proportional_with_floor():
     assert alloc[95] == 500  # raised to the floor
     assert alloc[41] > alloc[71] > alloc[81] >= 500
     assert abs(alloc.sum() - 10000) <= 150
+
+
+def test_fit_stats_perfect_and_noisy():
+    x = np.linspace(0.05, 0.5, 200)
+    f = harmonize.fit_linear(x, 0.01 + 0.9 * x, "rma")
+    st = harmonize.fit_stats(x, 0.01 + 0.9 * x, f)
+    assert st["r2"] == pytest.approx(1.0) and st["rmse"] == pytest.approx(0, abs=1e-12)
+    rng = np.random.default_rng(3)
+    y = 0.01 + 0.9 * x + rng.normal(0, 0.02, x.size)
+    ols = harmonize.fit_linear(x, y, "ols")
+    rma = harmonize.fit_linear(x, y, "rma")
+    s_ols, s_rma = harmonize.fit_stats(x, y, ols), harmonize.fit_stats(x, y, rma)
+    assert s_ols["rmse"] <= s_rma["rmse"]  # OLS minimizes squared error in y
+    assert s_ols["bias"] == pytest.approx(0, abs=1e-12)
+    assert s_ols["n"] == 200

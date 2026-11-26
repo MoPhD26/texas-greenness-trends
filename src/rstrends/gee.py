@@ -100,7 +100,7 @@ def prep(img: ee.Image, family: str, cfg: dict) -> ee.Image:
         ok = ok.And(op.multiply(qa.OPACITY_SCALE).lte(cfg["qa"]["max_atmos_opacity"]).Or(op.lt(0)))
     acq = qap.bitwiseAnd(1 << qa.QA_FILL).eq(0).rename("acq")
     refl = red.rename("red").addBands(nir.rename("nir")).updateMask(ok)
-    return refl.addBands(acq).copyProperties(img, ["system:time_start"])
+    return ee.Image(refl.addBands(acq).copyProperties(img, ["system:time_start"]))
 
 
 def add_indices(img: ee.Image) -> ee.Image:
@@ -214,6 +214,126 @@ def annual_composite(cfg: dict, year: int, fc: ee.FeatureCollection, harm: dict 
         counts.append(n.unmask(0).toInt16().rename(f"n_{name}"))
     n_acq = obs.select("acq").sum().unmask(0).toInt16().rename("n_acq")
     out = med.rename(INDEX_BANDS).addBands(counts).addBands(n_acq)
+    return out.updateMask(province_mask(fc)).set("year", year)
+
+
+def filter_geometry(gpkg_path, buffer_m: float) -> ee.Geometry:
+    """Province outline buffered and simplified by buffer_m, for filtering scenes.
+
+    Filtering by the full 10,583-vertex polygon exceeds Earth Engine memory limits. The
+    buffer keeps every scene that touches the province.
+    """
+    import geopandas as gpd
+
+    g = gpd.read_file(gpkg_path).to_crs(5070).geometry.iloc[0]
+    g = g.buffer(buffer_m).simplify(buffer_m)
+    g = gpd.GeoSeries([g], crs=5070).to_crs(4326).iloc[0]
+    return ee.Geometry(g.__geo_interface__, "EPSG:4326", False)
+
+
+def _subseason_index(img: ee.Image, cfg: dict, year: int) -> ee.Number:
+    """0-based index of the sub-season that holds the image date, -1 if none."""
+    t = ee.Number(img.get("system:time_start"))
+    idx = ee.Number(-1)
+    for k, (a, b) in enumerate(cfg["season"]["sub_seasons"].values()):
+        start = ee.Date(f"{year}-{a}").millis()
+        end = ee.Date((_date(f"{year}-{b}") + dt.timedelta(days=1)).isoformat()).millis()
+        idx = ee.Number(ee.Algorithms.If(t.gte(start).And(t.lt(end)), k, idx))
+    return idx
+
+
+def annual_composite_single_pass(
+    cfg: dict,
+    year: int,
+    fc: ee.FeatureCollection,
+    filt: ee.Geometry,
+    harm: dict | None,
+    indices: list[str] | None = None,
+    subsets: bool = True,
+    max_cloud: float | None = None,
+    return_observations: bool = False,
+) -> ee.Image:
+    """One year's main export, computed in a single pass over the scenes.
+
+    Every observation carries its index bands and one 0/1 indicator per sub-season (masked
+    where the observation is not clear), built in one map over the scenes. The median of the
+    index bands and the sum of the indicators replace the old five separate passes
+    (median, three sub-season counts, acquisition count). Single-sensor subset bands are
+    masked on observations from other sensors.
+    Band order matches rstrends.batches.export_bands.
+    """
+    from rstrends.batches import export_bands
+
+    indices = list(indices or cfg["export"]["main_indices"])
+    seasons = list(cfg["season"]["sub_seasons"])
+    active = {
+        name: sub
+        for name, sub in cfg["export"]["subsets"].items()
+        if subsets and sub["years"][0] <= year <= sub["years"][1]
+    }
+    if max_cloud is None:
+        max_cloud = cfg["qa"]["max_scene_cloud_cover_land"]
+    med_names = indices + [f"{n}_evi2" for n in active]
+    cnt_names = [f"n_{s}" for s in seasons] + [f"{n}_n_{s}" for n in active for s in seasons]
+
+    parts = []
+    for key in sensor_keys(cfg):
+        win = sensor_window(cfg, key, year)
+        if win is None:
+            continue
+        fam = cfg["sensors"][key]["family"]
+        col = ee.ImageCollection(cfg["sensors"][key]["collection"]).filterBounds(filt)
+        col = col.filterDate(win[0], win[1])
+        if max_cloud is not None:
+            col = col.filter(ee.Filter.lte("CLOUD_COVER_LAND", max_cloud))
+        coeffs = to_oli_coefficients(harm, fam, year)
+
+        def build(im, fam=fam, coeffs=coeffs):
+            o = prep(im, fam, cfg)
+            if coeffs is not None:
+                o = apply_linear(o, coeffs)
+            o = add_indices(o)
+            valid = o.select("evi2").mask()
+            k = _subseason_index(im, cfg, year)
+            ind = ee.Image.cat(
+                [ee.Image.constant(0).add(ee.Number(k).eq(i)).toByte() for i in range(len(seasons))]
+            ).updateMask(valid)
+            empty = ee.Image.constant(0).updateMask(ee.Image.constant(0))
+            bands = [o.select(indices).toFloat()]
+            for name, sub in active.items():
+                if sub["family"] == fam:
+                    bands.append(o.select("evi2").toFloat().rename(f"{name}_evi2"))
+                else:
+                    bands.append(empty.toFloat().rename(f"{name}_evi2"))
+            bands.append(ind.rename([f"n_{s}" for s in seasons]))
+            for name, sub in active.items():
+                names = [f"{name}_n_{s}" for s in seasons]
+                bands.append(
+                    ind.rename(names)
+                    if sub["family"] == fam
+                    else ee.Image.cat([empty.toByte()] * len(seasons)).rename(names)
+                )
+            return ee.Image.cat(bands).select(med_names + cnt_names)
+
+        parts.append(col.map(build))
+    if not parts:
+        raise ValueError(f"no sensors cover the {year} season")
+    obs = parts[0]
+    for p in parts[1:]:
+        obs = obs.merge(p)
+    if return_observations:
+        return obs
+
+    # Per-band reducers. A multi-input reducer would drop every observation where any band
+    # is masked, and subset bands are masked on the other sensor's scenes.
+    scale = cfg["indices"]["storage_scale"]
+    med = obs.select(med_names).median().rename(med_names).multiply(scale).round().toInt16()
+    cnt = obs.select(cnt_names).sum().rename(cnt_names).unmask(0).toInt16()
+    out = med.addBands(cnt).select(
+        export_bands(cfg, year)
+        if indices == list(cfg["export"]["main_indices"]) and subsets
+        else med_names + cnt_names
+    )
     return out.updateMask(province_mask(fc)).set("year", year)
 
 

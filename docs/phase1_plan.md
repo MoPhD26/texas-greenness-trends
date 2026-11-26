@@ -1,8 +1,24 @@
-# Phase 1: Literature Review and Study Plan (revision 2)
+# Phase 1: Literature Review and Study Plan (revision 4)
 
 Texas greenness trends, Bailey's Prairie Parkland (Subtropical) Province 255, 2000-2026
 
-Status: **approved** (revision 3, 2026-11-25). Revision 2 was approved with the decisions listed in Section 0.1.
+Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
+
+---
+
+## 0.0 Revision 4: decisions after the Phase 3 pilot
+
+| Item | Decision |
+|---|---|
+| Study area | The 2007 delineation of Province 255 from the USDA Forest Service ECOMAP Ecological Provinces data (Cleland et al. 2007). The 2025 ECOMAP release revised the hierarchy and no longer has a Province 255. Its area now falls mostly in Province 352 Cross Timbers and Province 353 Texas Gulf. We use the 2007 delineation because it is the only source that defines Province 255, the unit this study and its 2016 predecessor are framed around. Measured area: 246,477 km2, about 274 million 30 m pixels (revision 3 said 207,500 km2 and 231 million). |
+| Grid | The Annual NLCD Collection 1 grid: Albers Equal Area on the WGS84 datum, 30 m, read from the Annual NLCD land cover images so every pixel aligns with the land cover data. This is not EPSG:5070, which uses the NAD83 datum. The two differ by about 1 m here. Area statistics stay equal-area. |
+| Period | 2000-2026. The 2026 season is complete in the archive (Section 7 decision rule). |
+| Export design | One task per year, computed in a single pass over the scenes. Scenes are filtered by the province outline (1 km buffer) instead of its bounding box, and scenes with more than 90% land cloud cover are skipped. Province-wide bands: EVI2 and the three sub-season clear counts. The ETM+ only (2000-2019) and OLI only (2013-2019) subsets are folded into the same yearly tasks as extra bands, so each scene is read once. The all-acquisitions count is computed at 300 m for the quality report. |
+| Index checks | NIRv and kNDVI run on a 10% random sample of 512 x 512 chunks, not province wide. Index agreement is reported as sample statistics with confidence intervals. |
+| Robust trend | A pixel is a robust trend when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
+| Endpoint check | Leave-one-year-out runs only on pixels that are FDR-significant in the EVI2 core run. |
+| Harmonization | Sensor medians for each fit use the dates both sensors cover (for example, 2013 starts April 11 for both Landsat 7 and Landsat 8). Samples are drawn with interactive requests in logged chunks. Coefficients stay in draft until reviewed. |
+| Earth Engine tier | Contributor tier planned after the cost test review. No full exports until confirmed. |
 
 ---
 
@@ -219,7 +235,7 @@ The 40 numbered science papers include 37 core papers plus 3 kept only for frami
 
 **Recommended procedure.**
 1. **Bands.** Only red and NIR need harmonizing, because all three indices (EVI2, NIRv, kNDVI) use only those two bands. This is a real advantage of dropping the blue band.
-2. **ETM+ to OLI.** Fit using the 2013-2017 seasons, when both satellites flew and Landsat 7 was still in its maintained orbit (last maneuver August 2017). For a stratified random sample of about 30,000 stable Annual NLCD pixels, compute separate Landsat 7 and Landsat 8 March-October median red and NIR. Fit reduced major axis regression per band. RMA is used because both sensors have measurement error, and OLS would bias the slope toward zero (Roy et al. 2016 report both).
+2. **ETM+ to OLI.** Fit using the 2013-2017 seasons, when both satellites flew and Landsat 7 was still in its maintained orbit (last maneuver August 2017). For a stratified random sample of about 30,000 stable Annual NLCD pixels, compute separate Landsat 7 and Landsat 8 median red and NIR over the dates both sensors cover within March-October (revision 4). Fit reduced major axis regression per band. RMA is used because both sensors have measurement error, and OLS would bias the slope toward zero (Roy et al. 2016 report both).
 3. **TM to ETM+, year by year.** For each year 2000-2011, fit the same way using Landsat 5 and Landsat 7 medians from that year. Landsat 7 held its orbit during those years, so year-specific coefficients absorb the Landsat 5 drift that Zhang and Roy (2016) and Roy et al. (2020) documented, including its fast 2003-2007 change.
 4. **Chain.** TM goes to ETM+ (by year) and then to OLI. Landsat 9 is treated as OLI (Gross et al. 2022).
 5. **Apply per observation.** A median of one band commutes with an increasing linear transform, so coefficients fitted on season medians apply directly to each observation before indices are computed.
@@ -252,7 +268,7 @@ This keeps the spirit of the 2016 project, which used EVI, while removing the ba
 - Landsat 7 observations from January 1, 2020 onward are excluded.
 - Harmonize red and NIR (Section 3), then compute EVI2, NIRv, kNDVI per observation.
 - Composite: per-pixel median of each index over clear observations, March 1 to October 31.
-- Per pixel per year, also export the clear observation count in each of three sub-seasons (March-May, June-August, September-October) and the count of all acquisitions, so loss to masking and each validity rule can be reported.
+- Per pixel per year, also export the clear observation count in each of three sub-seasons (March-May, June-August, September-October) so the effect of each validity rule can be reported. The count of all acquisitions is computed at 300 m for the quality report (revision 4).
 
 **Validity rules (all in the config, applied locally so every rule's effect can be counted):**
 
@@ -264,7 +280,7 @@ This keeps the spirit of the 2016 project, which used EVI, while removing the ba
 | Endpoint coverage | pixel | at least 3 valid years in each of the first 5 years and the last 5 years of the record | Ensures the slope spans the study period instead of being fitted to the middle of it |
 
 The rules are applied in that order. The data quality report gives the number and percent of pixel-years or pixels removed by each rule, by year (for the pixel-year rules) and by land cover class.
-- Grid: Annual NLCD grid, CONUS Albers Equal Area (EPSG:5070), 30 m, pixel-aligned.
+- Grid: the Annual NLCD grid, Albers Equal Area on the WGS84 datum, 30 m, pixel-aligned with the land cover data (revision 4). Not EPSG:5070, which uses NAD83.
 
 **SLC-off gaps (2003-2019).** The missing stripes move from one date to the next, so a season median from many dates fills most of them. In 2003-2011 Landsat 5 also fills them, and in 2013-2019 Landsat 8 does. No gap-filling interpolation is used, because interpolated values would put invented data into a trend test. Pixels that still fall below the clear-count minimum are treated as missing years.
 
@@ -279,7 +295,7 @@ The rules are applied in that order. The data quality report gives the number an
 - Theil-Sen slope with confidence interval, Mann-Kendall with Hamed-Rao correction, Benjamini-Hochberg FDR at q = 0.10 (Wilks 2016) with q = 0.05 as a sensitivity.
 - Effect sizes: slope per decade in EVI2 units, and total change 2000-2026 as percent of the 2000-2004 mean.
 - Power: minimum detectable trend per pixel from Weatherhead et al. (1998). A non-significant pixel is reported as "no detectable trend".
-- Endpoint check: leave-one-year-out Theil-Sen slopes. A trend whose sign flips when one year is removed is flagged.
+- Endpoint check: leave-one-year-out Theil-Sen slopes, computed for pixels that are FDR-significant in the EVI2 core run (revision 4). A trend whose sign flips when one year is removed is flagged.
 
 ### 5.4 RQ2: trends by land cover class
 - Stable pixels: same Annual NLCD class in every year 2000-2025, and Annual NLCD confidence above a config threshold. Over 26 years, especially around Dallas-Fort Worth, Austin, and Houston, the stable share will be lower than in revision 1. Its size is reported.
@@ -305,9 +321,9 @@ The rules are applied in that order. The data quality report gives the number an
 
 **(b) Observation density.** Spearman correlation between each pixel's EVI2 slope and the Theil-Sen slope of its clear-observation count, overall and by class. A strong correlation would mean the trend tracks changing data density rather than vegetation.
 
-**(c) Index agreement.** Repeat RQ1 with NIRv and kNDVI. Report sign agreement among significant pixels and correlation of standardized slopes (slope divided by each pixel's interannual standard deviation, since the indices have different units).
+**(c) Index agreement.** Repeat RQ1 with NIRv and kNDVI on a 10% random sample of 512 x 512 chunks (revision 4). Report sign agreement among significant pixels and correlation of standardized slopes (slope divided by each pixel's interannual standard deviation, since the indices have different units) as sample statistics with bootstrap confidence intervals, resampling chunks.
 
-A pixel is called a **robust trend** when it is FDR-significant in EVI2, keeps its sign in the applicable subset from (a), and agrees in sign with NIRv and kNDVI.
+A pixel is called a **robust trend** when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset from (a): ETM+ only for 2000-2019 and OLI only for 2013-2026. Index agreement from (c) is reported separately as a sample statistic, not as part of the definition (revision 4).
 
 ### 5.7 Non-monotonic trends: how the paper handles them
 A 27-year record that contains the 2011 drought, the recovery after it, and the 2022 drought is unlikely to be monotonic everywhere. Theil-Sen and Mann-Kendall estimate the net monotonic tendency, and a pixel that browned then greened can show no trend at all (de Jong et al. 2012). The paper handles this in four ways without a new research question:
@@ -317,7 +333,7 @@ A 27-year record that contains the 2011 drought, the recovery after it, and the 
 4. **Break check.** The RQ3 break test reports which classes have a structural break. Full break detection (for example BFAST, Verbesselt et al. 2010) is listed as future work.
 
 ### 5.8 Maps
-- CONUS Albers Equal Area (EPSG:5070) for all maps and area statistics.
+- Albers Equal Area on the WGS84 datum (the Annual NLCD grid) for all maps and area statistics (revision 4).
 - Colorblind-safe diverging palette for slopes, checked with a colorblind simulator.
 - Scale bar, data credits for USGS Landsat, USGS Annual NLCD, and gridMET on every map.
 
@@ -343,7 +359,7 @@ A 27-year record that contains the 2011 drought, the recovery after it, and the 
 | Land cover and confidence | USGS Annual NLCD | Collection 1 (1.1 or 1.2, confirmed in Phase 3) | 30 m | 2000-2025 | https://doi.org/10.5066/P94UXNTS |
 | Land cover accuracy reference | Annual NLCD reference data | Collection 1.0 | plots | cited only | https://doi.org/10.5066/P13EDMAF |
 | Drought | gridMET drought indices (SPEI) | current | about 4 km | 2000-2026 | Abatzoglou 2013, https://doi.org/10.1002/joc.3413 |
-| Study area | USDA Forest Service Bailey's ecoregion provinces (ECOMAP) | current | vector | n/a | Citation confirmed in Phase 3 |
+| Study area | USDA Forest Service ECOMAP Ecological Provinces, Province 255 | 2007 release (revised in 2025, Section 0.0) | vector, presentation scale 1:3,500,000 | n/a | Cleland et al. 2007, GTR WO-76D, https://doi.org/10.2737/WO-GTR-76D |
 
 All dataset DOIs resolve at doi.org as of 2026-11-25. Access dates go in the README when data is pulled.
 
@@ -355,7 +371,7 @@ All dataset DOIs resolve at doi.org as of 2026-11-25. Access dates go in the REA
 
 Your machine: AMD Ryzen 7 7730U (8 cores, 16 threads), 15.4 GB RAM, 790 GB free on C:.
 
-Province 255 is about 207,500 km2, which is **about 231 million valid 30 m pixels**. Pixels outside the boundary are stored as nodata and compress to almost nothing.
+Province 255 is 246,477 km2 as measured in Phase 3, which is **about 274 million valid 30 m pixels** (revision 3 said 207,500 km2 and 231 million). Pixels outside the boundary are stored as nodata and compress to almost nothing.
 
 ### 8.1 Earth Engine exports
 
@@ -412,7 +428,7 @@ These are estimates from operation counts, not measurements. The environment doe
 | RESTREND and drought correlations | 1-2 hours |
 | **Total local compute** | **about 7-15 hours**, split across overnight runs |
 
-The trend math is written as vectorized NumPy and unit tested against pyMannKendall on small arrays. Looping pyMannKendall over 231 million pixels would take days.
+The trend math is written as vectorized NumPy and unit tested against pyMannKendall on small arrays. Looping pyMannKendall over 274 million pixels would take days.
 
 ### 8.5 Batch export procedure (Google Drive, about 5 years per batch)
 
@@ -421,17 +437,17 @@ Each batch is at most about 10 GB compressed, under the 15 GB free Drive limit w
 | Batch | Content |
 |---|---|
 | P | Pilot: main stack for one year (2012, the hardest year), measured for time, size, and EECU-hours |
-| B1-B5 | Main stack 2000-2004, 2005-2009, 2010-2014, 2015-2019, 2020-2024 |
-| B6 | Main stack 2025-2026, stable pixel mask, SPEI, harmonization sample |
-| B7-B8 | ETM+ only subset 2000-2009, 2010-2019 |
-| B9 | OLI only subset 2013-2019 |
+| B1-B5 | Main stack 2000-2004, 2005-2009, 2010-2014, 2015-2019, 2020-2024, with the ETM+ only and OLI only subset bands folded into the years they cover (revision 4) |
+| B6 | Main stack 2025-2026, stable pixel mask, SPEI |
+
+Revision 4 removes the separate subset batches (formerly B7-B9) and moves the harmonization sample to interactive requests.
 
 Steps for every batch:
 
 1. **Export.** `conda run -n rs-trends python src/03_export.py --batch B1` submits that batch's tasks to a Drive folder named after the batch (for example `rs_trends_B1`). The script refuses to start a batch while an earlier batch is still in Drive and not yet verified.
 2. **Wait.** `conda run -n rs-trends python src/03_export.py --status` shows task states and EECU use. Or watch the Tasks list in the Earth Engine Code Editor.
 3. **Download.** In Google Drive in your browser, right-click the batch folder and choose Download. Drive zips it, in several parts for large folders. Save the zips to `C:\rsdata\incoming\B1`. Do not use the Google Drive desktop sync app for this, because that would put the data in a synced folder.
-4. **Verify.** `conda run -n rs-trends python src/03_verify_batch.py --batch B1` unzips, checks that every expected file is present, opens each one, and checks CRS (EPSG:5070), 30 m pixels, alignment to the NLCD grid, band names, data types, and nodata. It writes a SHA-256 checksum for every file to `C:\rsdata\manifest.csv` with the batch, file name, size, and date. It then moves the files to `C:\rsdata\raw\` and prints PASS or FAIL.
+4. **Verify.** `conda run -n rs-trends python src/03_verify_batch.py --batch B1` unzips, checks that every expected file is present, opens each one, and checks CRS (the Annual NLCD Albers grid on WGS84), 30 m pixels, alignment to the NLCD grid, band names, data types, and nodata. It writes a SHA-256 checksum for every file to `C:\rsdata\manifest.csv` with the batch, file name, size, and date. It then moves the files to `C:\rsdata\raw\` and prints PASS or FAIL.
 5. **Delete, only after PASS.** Delete the batch folder in Drive, then empty the Drive trash. Trashed files still count against the 15 GB quota until the trash is emptied.
 6. **Next batch.** The verify step records the batch as done, which unlocks the next export.
 
