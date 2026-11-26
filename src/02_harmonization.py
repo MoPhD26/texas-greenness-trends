@@ -245,7 +245,8 @@ def fit(cfg: dict, root, out_dir, jobs) -> None:
         need = stat_columns(src, tgt)
         df = df.dropna(subset=need)
         df = df[(df[f"{src}_n"] >= nmin) & (df[f"{tgt}_n"] >= nmin)]
-        df = df[(df[[f"{p}_{b}" for p in (src, tgt) for b in ("red", "nir")]] != MISSING).all(1)]
+        meds = [f"{p}_{b}" for p in (src, tgt) for b in ("red", "nir")]
+        df = df[(df[meds] != MISSING).all(axis=1)]
         label = f"{years[0]}-{years[-1]}" if len(years) > 1 else str(years[0])
         transform = f"{src}_to_{tgt}"
         print(f"     {name}: {len(df)} of {n_all} points have >= {nmin} clear obs per sensor")
