@@ -248,13 +248,25 @@ Roy et al. (2016), Table 2, surface reflectance, ETM+ to OLI (OLI = intercept + 
 | Red | 0.9047 | 0.0061 | 0.9825 | -0.0022 |
 | NIR | 0.8462 | 0.0412 | 1.0073 | -0.0021 |
 
-The OLS values match the Earth Engine tutorial. The RMA values were read from the open-access PMC page (https://pmc.ncbi.nlm.nih.gov/articles/PMC6999663/), but the table itself could not be loaded automatically. A quick check against the printed Table 2 is needed before publication.
+Checked against the printed Table 2 (2026-11-26). Roy's OLS r-squared, from ETM+ and OLI pairs one day apart: red 0.848, NIR 0.706. That is the context for our fit quality: our medians come from different dates over a season or several seasons, not pairs one day apart, so r-squared values near Roy's would be a good result. Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC6999663/
 
 ### 11.6 Budget, November 2026 (Contributor, 1,000 EECU-hours)
 
 | Item | EECU-hours |
 |---|---|
-| Batch tasks this month | 28.3 (pilot 21.35, cost test 2.8 with failed attempts, cancelled 2013 sample 1.18, harmonization cost check 3.02) |
-| Interactive this month | not yet entered from the Cloud console. Reaching the old 150 limit implies at least about 120. |
-| Committed (approved, not run) | 0 |
-| Remaining | at most about 850 of 1,000 |
+| Total this month (Cloud console, 17.95% of the 1,000 quota) | 179.5 |
+| of which batch tasks | 28.3 (pilot 21.35, cost test 2.8 with failed attempts, cancelled 2013 sample 1.18, harmonization cost check 3.02) |
+| of which interactive | about 151, almost all of it the scattered-point harmonization sample |
+| Committed: remaining harmonization (12 tasks) and the clean cost test rerun | about 51 (estimate) |
+| Remaining | about 770 of 1,000 (stop-and-ask line 850) |
+
+The quota is confirmed as 1,000: the project's "Monthly EECU-seconds" quota reads 3,600,000 seconds in the Service Usage API.
+
+### 11.7 Export schedule with 400 GB of Drive
+
+All batches fit in Drive at once as plain GeoTIFF (about 76 GB), so batches no longer wait for the one before to be downloaded and cleared. The export script now writes plain GeoTIFF and only requires the pilot to be verified before a main batch.
+
+1. Review the harmonization fits and the clean cost test together. Finalize the coefficients. No main exports before this.
+2. Submit B1 to B6 together or in two waves, within the month's quota. Earth Engine runs a few tasks at a time per project and queues the rest.
+3. Download each batch as it finishes, while later batches still run. Verify each batch with `03_verify_batch.py`. Nothing is deleted from Drive until its batch passes, and deleting still needs your approval.
+4. Expected cost with the approved cuts: about 600-900 EECU-hours for the main stack (Section 7 and 8). This will be updated from the clean cost test. If the November remainder is not enough, the rest runs after the December 1 reset, within December's 850 stop-and-ask line.

@@ -1,10 +1,11 @@
 """Phase 3, step 3: annual composite exports to Google Drive, in batches (plan Section 8.5).
 
   --batch P        submit the pilot (one year, export.pilot_year)
-  --batch B1 ...   submit a main-stack batch. Refused while an earlier batch is not verified.
+  --batch B1 ...   submit main-stack batches. Several may run at once (400 GB of Drive holds
+                   all of them). Refused until the pilot is verified.
   --status         show state, run time, and EECU-hours of every submitted task
 
-Each year is one export task, written as int16 Cloud Optimized GeoTIFF tiles on the Annual
+Each year is one export task, written as int16 plain GeoTIFF tiles (no overviews) on the Annual
 NLCD grid, computed in a single pass over the scenes. Bands (rstrends.batches.export_bands):
 evi2 (x storage_scale) and sub-season clear counts, plus etm_* bands for 2000-2019 and oli_*
 bands for 2013-2019 (the single-sensor subsets). The pilot (P) used the earlier
@@ -57,12 +58,8 @@ def main() -> None:
             raise SystemExit(f"unknown batch {name}. Defined: {', '.join(batches)}")
         if name in ledger:
             raise SystemExit(f"batch {name} was already submitted on {ledger[name]['submitted']}")
-        if name != "P":
-            pending = [b for b, v in ledger.items() if not v.get("verified")]
-            if pending or "P" not in ledger:
-                raise SystemExit(
-                    f"refusing {name}: pilot not run or batches not yet verified: {pending}"
-                )
+        if name != "P" and not ledger.get("P", {}).get("verified"):
+            raise SystemExit(f"refusing {name}: the pilot is not verified")
         harm_path = root / "outputs" / "harmonization" / "coefficients.json"
         if not harm_path.exists():
             raise SystemExit(
@@ -94,7 +91,9 @@ def main() -> None:
                 maxPixels=int(1e13),
                 fileFormat="GeoTIFF",
                 fileDimensions=cfg["export"]["file_dimensions"],
-                formatOptions={"cloudOptimized": True, "noData": cfg["export"]["nodata"]},
+                # Plain GeoTIFF: overviews are never read (files are processed in chunks)
+                # and added 35% to the pilot's size.
+                formatOptions={"cloudOptimized": False, "noData": cfg["export"]["nodata"]},
             )
             task.start()
             tasklog.append(log_path, name, desc, task.id)

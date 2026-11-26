@@ -57,6 +57,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--submit", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument(
+        "--rerun",
+        metavar="TAG",
+        help="submit the same four variants again with this tag in their names (for a clean rerun)",
+    )
     args = ap.parse_args()
 
     cfg = load_config()
@@ -72,10 +77,12 @@ def main() -> None:
     gee.initialize(project)
 
     if args.submit:
+        tag = f"_{args.rerun}" if args.rerun else ""
         live = [
             r["description"]
             for r in tasklog.read(log_path, "T")
-            if gee.operation_summary(project, r["task_id"])["state"] not in ("FAILED", "CANCELLED")
+            if r["description"].endswith(f"_{YEAR}{tag}")
+            and gee.operation_summary(project, r["task_id"])["state"] not in ("FAILED", "CANCELLED")
         ]
         if live:
             raise SystemExit(f"cost test already submitted and not failed: {live}. Use --status.")
@@ -113,12 +120,12 @@ def main() -> None:
         (root / "logs" / "cost_test.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         print(f"     tile {TILE_PX} px at {ulx:.0f}, {uly:.0f}, {frac:.0%} inside the province")
         for name, img in variants.items():
-            desc = f"T_cost_{name}_{YEAR}"
+            desc = f"T_cost_{name}_{YEAR}{tag}"
             task = ee.batch.Export.image.toDrive(
                 image=img,
                 description=desc,
                 folder=f"{cfg['export']['drive_folder_prefix']}T",
-                fileNamePrefix=f"cost_{name}_{YEAR}",
+                fileNamePrefix=f"cost_{name}_{YEAR}{tag}",
                 region=region,
                 crs=wkt,
                 crsTransform=transform,

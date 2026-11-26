@@ -56,14 +56,15 @@ harmonization:
   seed: 2026
   # Roy et al. (2016) Table 2, ETM+ to OLI surface reflectance (OLI = intercept + slope * ETM+).
   # Open access: https://pmc.ncbi.nlm.nih.gov/articles/PMC6999663/ (doi 10.1016/j.rse.2015.12.024).
-  # OLS values match the Earth Engine community harmonization tutorial. RMA values were read from
-  # the PMC page text and still need a check against the printed table.
+  # Checked against the paper's Table 2 on 2026-11-26. Roy's OLS r-squared (ETM+ and OLI pairs
+  # one day apart): red 0.848, NIR 0.706. Context for our fit quality.
   roy2016_ols:
     red: {slope: 0.9047, intercept: 0.0061}
     nir: {slope: 0.8462, intercept: 0.0412}
   roy2016_rma:
     red: {slope: 0.9825, intercept: -0.0022}
     nir: {slope: 1.0073, intercept: -0.0021}
+  roy2016_r2: {red: 0.848, nir: 0.706}
 
 indices:
   primary: "evi2"
@@ -128,5 +129,6 @@ paths:
   subdirs: ["incoming", "raw", "interim", "outputs", "logs"]
 
 budget:
-  monthly_quota_eecu_h: 1000       # Earth Engine Contributor tier (switched 2026-11-26)
+  monthly_quota_eecu_h: 1000       # Earth Engine Contributor tier (switched 2026-11-26). The
+                                   # project's "Monthly EECU-seconds" quota reads 3,600,000 s.
   stop_at_eecu_h: 850              # stop and ask if planned work would push the month past this

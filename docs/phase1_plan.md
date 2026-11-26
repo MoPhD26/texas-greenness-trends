@@ -32,7 +32,7 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Harmonization | Coefficients fitted on our Collection 2 data are primary. Roy et al. (2016) is the comparison run. |
 | Index | EVI2 primary. NIRv and kNDVI as checks. |
 | Thresholds | At least 4 clear observations per pixel-year. At least 20 valid years of 27. Plus two new rules: seasonal coverage and endpoint coverage (Section 5.1). Pixels removed by each rule are reported by year and by class. |
-| Export storage | Batched Google Drive exports of about 5 years each, with a fixed export, download, verify, delete procedure (Section 8.5) |
+| Export storage | Batched Google Drive exports of about 5 years each, with a fixed export, download, verify, delete procedure (Section 8.5). Revision 5: with 400 GB of Drive, batches may run in parallel. |
 | Phases | Renumbered. Phase 5 is outputs. |
 | Endpoint check | Leave-one-year-out on EVI2 only |
 | Data location | All data in `C:\rsdata`, outside the repo and outside any synced folder. Set by the `RS_DATA_DIR` environment variable, with the config as fallback. Data paths are in `.gitignore`. |
@@ -434,7 +434,7 @@ The trend math is written as vectorized NumPy and unit tested against pyMannKend
 
 ### 8.5 Batch export procedure (Google Drive, about 5 years per batch)
 
-Each batch is at most about 10 GB compressed, under the 15 GB free Drive limit with room to spare.
+Revision 5: measured from the pilot, the full main stack is about 76 GB as plain GeoTIFF (the exports no longer write Cloud Optimized overviews, which added 35%). Batches range from about 3 GB (B6) to 21 GB (B4). Drive now has 400 GB, so all batches fit at once. Several batches may run in parallel within the month's EECU quota, and earlier batches are downloaded while later ones run. Each batch is still verified before anything is deleted from Drive.
 
 | Batch | Content |
 |---|---|
@@ -446,12 +446,12 @@ Revision 4 removes the separate subset batches (formerly B7-B9). Revision 5 draw
 
 Steps for every batch:
 
-1. **Export.** `conda run -n rs-trends python src/03_export.py --batch B1` submits that batch's tasks to a Drive folder named after the batch (for example `rs_trends_B1`). The script refuses to start a batch while an earlier batch is still in Drive and not yet verified.
+1. **Export.** `conda run -n rs-trends python src/03_export.py --batch B1` submits that batch's tasks to a Drive folder named after the batch (for example `rs_trends_B1`). The script refuses main batches until the pilot is verified and the harmonization coefficients are final (revision 5: batches no longer wait for each other).
 2. **Wait.** `conda run -n rs-trends python src/03_export.py --status` shows task states and EECU use. Or watch the Tasks list in the Earth Engine Code Editor.
 3. **Download.** In Google Drive in your browser, right-click the batch folder and choose Download. Drive zips it, in several parts for large folders. Save the zips to `C:\rsdata\incoming\B1`. Do not use the Google Drive desktop sync app for this, because that would put the data in a synced folder.
 4. **Verify.** `conda run -n rs-trends python src/03_verify_batch.py --batch B1` unzips, checks that every expected file is present, opens each one, and checks CRS (the Annual NLCD Albers grid on WGS84), 30 m pixels, alignment to the NLCD grid, band names, data types, and nodata. It writes a SHA-256 checksum for every file to `C:\rsdata\manifest.csv` with the batch, file name, size, and date. It then moves the files to `C:\rsdata\raw\` and prints PASS or FAIL.
-5. **Delete, only after PASS.** Delete the batch folder in Drive, then empty the Drive trash. Trashed files still count against the 15 GB quota until the trash is emptied.
-6. **Next batch.** The verify step records the batch as done, which unlocks the next export.
+5. **Delete, only after PASS.** Delete the batch folder in Drive, then empty the Drive trash. Trashed files still count against the Drive quota until the trash is emptied. Deleting needs approval each time.
+6. **Ledger.** The verify step records the batch as verified in `logs/batches.json`.
 
 If verify FAILS, the script lists what is wrong, keeps the files in `incoming`, and you do not delete anything from Drive. We fix it and re-export only the failed pieces.
 
