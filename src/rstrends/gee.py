@@ -377,6 +377,40 @@ def sensor_medians(cfg: dict, key: str, year: int, region: ee.Geometry, prefix: 
     return med.addBands(n)
 
 
+def boxes_fc(boxes, box_px: int, wkt: str, res: float = 30.0) -> ee.FeatureCollection:
+    """Cluster boxes (upper-left corners in the grid CRS) as planar rectangles with a cid."""
+    proj = ee.Projection(wkt)
+    side = box_px * res
+    return ee.FeatureCollection(
+        [
+            ee.Feature(ee.Geometry.Rectangle([x, y - side, x + side, y], proj, False), {"cid": i})
+            for i, (x, y) in enumerate(boxes)
+        ]
+    )
+
+
+def sensor_stats(cfg: dict, key: str, windows, region, prefix: str) -> ee.Image:
+    """Median, standard deviation, and clear count of red and NIR over several date windows.
+
+    windows: list of (year, (start, end)). Observations from all windows are pooled, so a
+    multi-year window list gives one median per pixel across those years. Each statistic is
+    reduced band by band. Masked medians become -9 and counts 0, so sampling never drops a
+    point because one sensor had no clear view.
+    """
+    cols = [sensor_collection(cfg, key, y, region, w) for y, w in windows]
+    cols = [c for c in cols if c is not None]
+    if not cols:
+        raise ValueError(f"{key} has no data in {windows}")
+    col = cols[0]
+    for c in cols[1:]:
+        col = col.merge(c)
+    col = col.select(["red", "nir"])
+    med = col.median().rename([f"{prefix}_red", f"{prefix}_nir"])
+    sd = col.reduce(ee.Reducer.stdDev()).rename([f"{prefix}_red_sd", f"{prefix}_nir_sd"])
+    n = col.select("nir").count().rename(f"{prefix}_n")
+    return med.addBands(sd).unmask(-9).addBands(n.unmask(0).toInt16())
+
+
 # ---------- tasks ----------
 
 

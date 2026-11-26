@@ -43,21 +43,27 @@ qa:
 harmonization:
   method: "rma"                    # reduced major axis regression
   bands: ["red", "nir"]
-  sample_pixels: 30000             # stratified random sample of stable pixels
+  sample_pixels: 10000             # stratified random sample of stable pixels, in clusters
+  clusters: {n: 200, box_px: 64}   # 200 random grid-aligned boxes of 64 x 64 px (1.92 km)
   etm_to_oli_fit_years: [2013, 2017]   # Landsat 7 still in maintained orbit
   tm_to_etm_fit: "per_year"        # one TM to ETM+ fit per year, 2000-2011
   comparison: "roy2016"            # comparison run with Roy et al. (2016) coefficients
   stable_years: [2000, 2017]       # sample pixels have one Annual NLCD class through these years
   exclude_classes: [11, 12]        # open water, perennial ice and snow
-  min_points_per_class: 500        # floor in the area-proportional stratified sample
-  min_clear_obs_per_sensor: 4      # a point-year enters the fit only if both sensors have this many
+  min_points_per_class: 300        # floor in the area-proportional stratified sample
+  min_clear_obs_per_sensor: 10     # a point enters a fit only if both sensors have this many
   n_boot: 1000                     # cluster bootstrap resamples for confidence intervals
   seed: 2026
-  # Roy et al. (2016) Table 2 OLS coefficients, ETM+ to OLI surface reflectance, as given in
-  # the Earth Engine community harmonization tutorial. RMA values not yet verified.
+  # Roy et al. (2016) Table 2, ETM+ to OLI surface reflectance (OLI = intercept + slope * ETM+).
+  # Open access: https://pmc.ncbi.nlm.nih.gov/articles/PMC6999663/ (doi 10.1016/j.rse.2015.12.024).
+  # OLS values match the Earth Engine community harmonization tutorial. RMA values were read from
+  # the PMC page text and still need a check against the printed table.
   roy2016_ols:
     red: {slope: 0.9047, intercept: 0.0061}
     nir: {slope: 0.8462, intercept: 0.0412}
+  roy2016_rma:
+    red: {slope: 0.9825, intercept: -0.0022}
+    nir: {slope: 1.0073, intercept: -0.0021}
 
 indices:
   primary: "evi2"
@@ -120,3 +126,7 @@ index_checks:
 paths:
   data_dir: "C:/rsdata"            # overridden by the RS_DATA_DIR environment variable
   subdirs: ["incoming", "raw", "interim", "outputs", "logs"]
+
+budget:
+  monthly_quota_eecu_h: 1000       # Earth Engine Contributor tier (switched 2026-11-26)
+  stop_at_eecu_h: 850              # stop and ask if planned work would push the month past this

@@ -48,7 +48,7 @@ Read these numbers with three cautions.
 | EECU-hours | 21.35 (76,851 EECU-seconds) |
 | Scenes processed | 488 Landsat 7 scenes (bounding box filter) |
 | Harmonization used | provisional 2013 ETM+ to OLI coefficients. Run time and cost do not depend on the coefficient values. 2012 is exported again in batch B3. |
-| File size | **not yet measured.** Download the Drive folder to `C:\rsdata\incoming\P`, then run `src/03_verify_batch.py --batch P`. |
+| File size | 3.31 GB in 2 files (Section 11.2) |
 
 2012 is a low density year (Landsat 7 only), so it is a lower bound per year. A typical two sensor year has about 1,000 to 1,100 scenes in the bounding box.
 
@@ -154,3 +154,107 @@ Recommended schedule, Contributor tier:
 On the Community tier, the same order holds, with one or two batches per month after the December 1 reset.
 
 Size estimates stay estimates until the pilot file is measured.
+
+## 11. Update after the Contributor switch (2026-11-26, evening UTC)
+
+### 11.1 Restricted Mode
+
+The project moved to the Contributor tier (1,000 EECU-hours per month). Signs that Restricted Mode has lifted: a small interactive request succeeded, and the harmonization cost check task ran on its first attempt in 42 seconds. Under Restricted Mode, every cost test task had needed 2 or 3 attempts spread over several hours. The Cloud console is the place to confirm the tier status.
+
+### 11.2 Pilot file size (measured)
+
+| Measure | Value |
+|---|---|
+| Files | 2 GeoTIFF tiles, 683 million grid pixels (the province bounding box) |
+| On disk | 3.31 GB, of which 2.45 GB is full resolution data and 0.86 GB is Cloud Optimized GeoTIFF overviews (35% extra) |
+| Compression | LZW, pixel interleaved. Inside the province, 7 int16 bands compress to 0.64 of raw, so about 1.28 bytes per band per pixel. Pixels outside the province cost almost nothing. |
+| Verification | passed (CRS, 30 m grid alignment, 7 bands, int16, nodata tag) |
+
+**Problem found.** Masked pixels were written as 0, not as the nodata value -32768, even though the export set the nodata option. That covers pixels outside the province and any pixel without a clear view, and 0 is a valid EVI2 value. The pilot file is still fine for timing and size, since zeros and nodata compress alike. Fixes: the export script now replaces masked pixels with -32768 explicitly before export. The verify script now fails a batch if band 1 has no nodata pixels or is exactly 0 in more than 1% of pixels.
+
+### 11.3 Export size and Drive space, from the measured pilot
+
+Bands per year under the revision 4 design: EVI2 and 3 counts, plus 4 ETM+ only bands for 2000-2019 and 4 OLI only bands for 2013-2019. That is 216 band-years.
+
+| Batch | Years | Band-years | Size with overviews | Without overviews |
+|---|---|---|---|---|
+| B1 | 2000-2004 | 40 | 18.9 GB | 14.0 GB |
+| B2 | 2005-2009 | 40 | 18.9 GB | 14.0 GB |
+| B3 | 2010-2014 | 48 | 22.7 GB | 16.8 GB |
+| B4 | 2015-2019 | 60 | 28.4 GB | 21.0 GB |
+| B5 | 2020-2024 | 20 | 9.5 GB | 7.0 GB |
+| B6 | 2025-2026 | 8 | 3.8 GB | 2.8 GB |
+| Total | | 216 | about 102 GB | about 76 GB |
+
+These use the pilot's 1.28 bytes per band per pixel, which is conservative: the new design has a larger share of count bands, which compress better than index bands. Local disk has 782 GB free, so local space is not a constraint.
+
+Drive is the constraint. B4 alone needs about 28 GB. Two changes would fit it in less space:
+
+1. Export plain GeoTIFF instead of Cloud Optimized GeoTIFF. The overviews are never used, because the files are read into 512 x 512 chunks locally. This saves about 26%.
+2. Split the larger batches. On 15 GB of free Drive space, B1 to B4 would each need to be split in two (about 2-3 years per task group). With 100 GB or more, the planned 5 year batches fit, one at a time.
+
+### 11.4 Cost test result: not usable as measured
+
+| Variant | EECU-hours | Attempts |
+|---|---|---|
+| A (pilot design, bounding box filter) | 0.517 | 2 |
+| B (outline filter, cloud skip, single pass, 3 indices) | 0.678 | 2 |
+| C (B with EVI2 only) | 0.804 | 2 |
+| D (C plus subset bands, production design) | 0.806 | 3 |
+
+All four ran under Restricted Mode and were restarted by Earth Engine. The EECU totals include the failed attempts, which is visible because B and C reported EECU while still queued. C costing more than B cannot be a real effect, since C computes a subset of B. A clean rerun of the four variants on the same tile, now that the quota is restored, would cost about 3 EECU-hours. Not started. It needs approval.
+
+### 11.5 Harmonization: clustered batch sample
+
+Design: 200 random boxes of 64 x 64 pixels (1.92 km) fully inside the province, grid-aligned and non-overlapping. Inside the boxes, 10,005 stable Annual NLCD pixels are drawn, area proportional by class with a floor of 300 points per class. The draw happens inside each batch task with a fixed seed. Each row records the pixel's grid coordinates, so the point sets of different tasks can be checked against each other.
+
+| Class | Stable pixels in boxes | Points |
+|---|---|---|
+| 21 developed open | 25,689 | 321 |
+| 22 developed low | 25,474 | 318 |
+| 23 developed medium | 12,193 | 300 |
+| 24 developed high | 3,607 | 300 |
+| 31 barren | 1,751 | 300 |
+| 41 deciduous forest | 69,647 | 869 |
+| 42 evergreen forest | 16,254 | 300 |
+| 43 mixed forest | 18,210 | 300 |
+| 52 shrub | 27,301 | 341 |
+| 71 grassland | 187,152 | 2,336 |
+| 81 pasture and hay | 215,588 | 2,691 |
+| 82 cropland | 82,404 | 1,029 |
+| 90 woody wetlands | 23,562 | 300 |
+| 95 emergent wetlands | 3,688 | 300 |
+
+Rare classes (barren, developed high, emergent wetlands) come from few boxes, so their by-class statistics will have wide intervals.
+
+Each task samples, for both sensors: median red and NIR, their standard deviations, and the clear observation count, all over the dates both sensors cover.
+
+**Cost check (one year, TM to ETM+ 2006): 3.02 EECU-hours, one attempt, 42 seconds.** That is about 10 times cheaper per year than the interactive sample of scattered points (about 30 EECU-hours per year).
+
+Projection for the rest:
+
+| Job | Estimate |
+|---|---|
+| TM to ETM+, 11 more years (2000-2005, 2007-2011) | about 33 EECU-hours (2.5-4 per year) |
+| ETM+ to OLI, pooled 2013-2017 (one task over five years of both sensors) | about 15 EECU-hours (12-20) |
+| Total remaining | about 48 EECU-hours (40-60) |
+
+Fit method: ETM+ to OLI on pooled per-point medians, TM to ETM+ by year, at least 10 clear observations per sensor at each point. RMA is primary, OLS for the Roy comparison, and Deming as a check. The Deming error variance ratio is estimated from each point's sampling variance of the median, (pi / 2) x sd^2 / n, averaged per sensor. Confidence intervals come from a cluster bootstrap over boxes (1,000 resamples). Outputs: `fit_table.csv`, `fit_by_class.csv`, and `evi2_offsets.csv`. The last gives mean EVI2 offset and RMSD before and after each transform (our RMA, Deming, and OLS, and Roy RMA and OLS), overall and by class. All of this was tested end to end on synthetic files.
+
+Roy et al. (2016), Table 2, surface reflectance, ETM+ to OLI (OLI = intercept + slope x ETM+):
+
+| Band | Roy OLS slope | Roy OLS intercept | Roy RMA slope | Roy RMA intercept |
+|---|---|---|---|---|
+| Red | 0.9047 | 0.0061 | 0.9825 | -0.0022 |
+| NIR | 0.8462 | 0.0412 | 1.0073 | -0.0021 |
+
+The OLS values match the Earth Engine tutorial. The RMA values were read from the open-access PMC page (https://pmc.ncbi.nlm.nih.gov/articles/PMC6999663/), but the table itself could not be loaded automatically. A quick check against the printed Table 2 is needed before publication.
+
+### 11.6 Budget, November 2026 (Contributor, 1,000 EECU-hours)
+
+| Item | EECU-hours |
+|---|---|
+| Batch tasks this month | 28.3 (pilot 21.35, cost test 2.8 with failed attempts, cancelled 2013 sample 1.18, harmonization cost check 3.02) |
+| Interactive this month | not yet entered from the Cloud console. Reaching the old 150 limit implies at least about 120. |
+| Committed (approved, not run) | 0 |
+| Remaining | at most about 850 of 1,000 |

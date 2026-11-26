@@ -1,20 +1,30 @@
-"""Phase 3, step 2: harmonization sample and coefficient fits (plan Section 3).
+"""Phase 3, step 2: harmonization sample and coefficient fits (plan Section 3, revision 5).
 
-Steps (each resumes where it stopped):
-  --points   draw random candidate points inside the province, read their stable Annual NLCD
-             class, and select an area-proportional stratified sample with a per-class floor
-  --sample   for every fit year, sample both sensors' March-October median red and NIR and
-             their clear-observation counts at the points (interactive requests)
-  --submit   the same sample as Earth Engine batch table exports to Google Drive (folder
-             rs_trends_H), one task per year. Batch tasks report EECU-hours. Download the CSVs
-             to <data>/incoming/H before --fit.
-  --fit      fit ETM+ to OLI (pooled 2013-2017, plus each year alone for comparison) and TM to
-             ETM+ (one fit per year 2000-2011). RMA primary, OLS for comparison, cluster-bootstrap
-             confidence intervals, n, r, R2, RMSE, and scatter diagnostics. Writes a draft only.
-  --finalize promote the reviewed draft to coefficients.json, which the exports read
+Sample design: about 10,000 stable Annual NLCD pixels in 200 small grid-aligned boxes (clusters)
+spread at random over the province. Clustering lets points share the Landsat tiles Earth Engine
+reads, which cuts the cost far below that of scattered points.
+
+Steps:
+  --clusters  pick the boxes (local), then read the stable class counts inside them (one small
+              interactive request on Annual NLCD only) and allocate points to classes
+  --submit    batch table exports to Google Drive (folder rs_trends_H). Jobs:
+                etm_oli_2013_2017  one median per point and sensor across all 2013-2017 dates
+                                   that both Landsat 7 and Landsat 8 cover
+                tm_etm_YYYY        one median per point and sensor in year YYYY (2000-2011),
+                                   over the dates both Landsat 5 and Landsat 7 cover
+              Choose jobs with --jobs. Download the CSVs to <data>/incoming/H before --fit.
+  --status    state and EECU-hours of the submitted sample tasks
+  --fit       RMA (primary), Deming with an estimated error ratio (check), and OLS (for the
+              Roy et al. 2016 comparison). Cluster-bootstrap confidence intervals. Fit statistics
+              and the EVI2 offset each transform removes, overall and by land cover class.
+              Writes a draft only.
+  --finalize  promote the reviewed draft to coefficients.json, which the exports read
 
 Run:
-  conda run -n rs-trends python src/02_harmonization.py --points --sample --fit
+  conda run -n rs-trends python src/02_harmonization.py --clusters
+  conda run -n rs-trends python src/02_harmonization.py --submit --jobs tm_etm_2006
+  conda run -n rs-trends python src/02_harmonization.py --status
+  conda run -n rs-trends python src/02_harmonization.py --fit
 """
 
 from __future__ import annotations
@@ -22,45 +32,58 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import shapely
+import pyproj
 
 from rstrends import indices, tasklog
 from rstrends.config import data_dir, ee_project, load_config
-from rstrends.harmonize import allocate, fit_linear, fit_stats
+from rstrends.harmonize import (
+    LinearFit,
+    allocate,
+    deming_lambda,
+    fit_linear,
+    fit_stats,
+    median_error_variance,
+)
+from rstrends.sampling import pick_boxes
 
-CANDIDATE_FACTOR = 6  # candidates drawn per final point, so rare classes reach their floor
-BATCH = 2500  # points per interactive Earth Engine request
+GROUP = "H2"  # task log group for the clustered batch sample
+MISSING = -9  # sensor_stats writes masked medians as this value
 
 
-def fit_pairs(df, src, tgt, method, n_boot, seed):
-    out = {}
-    for band in ("red", "nir"):
-        f = fit_linear(
-            df[f"{src}_{band}"],
-            df[f"{tgt}_{band}"],
-            method,
-            groups=df["pid"],
-            n_boot=n_boot,
-            seed=seed,
-        )
-        out[band] = f
-    return out
+def job_list(cfg: dict) -> dict[str, list[tuple[str, str, str, str, list[int]]]]:
+    """Job name -> (sensor key a, key b, prefix a, prefix b, years)."""
+    h = cfg["harmonization"]
+    y0, y1 = h["etm_to_oli_fit_years"]
+    jobs = {f"etm_oli_{y0}_{y1}": ("LE07", "LC08", "etm", "oli", list(range(y0, y1 + 1)))}
+    for y in range(cfg["period"]["start_year"], 2012):  # TM imaging ended November 2011
+        jobs[f"tm_etm_{y}"] = ("LT05", "LE07", "tm", "etm", [y])
+    return jobs
+
+
+def stat_columns(pa: str, pb: str) -> list[str]:
+    return [f"{p}_{s}" for p in (pa, pb) for s in ("red", "nir", "red_sd", "nir_sd", "n")]
+
+
+def evi2_offset(df, src, tgt, red_fit=None, nir_fit=None) -> np.ndarray:
+    """Target EVI2 minus source EVI2, with the source optionally transformed first."""
+    red, nir = df[f"{src}_red"], df[f"{src}_nir"]
+    if red_fit is not None:
+        red, nir = red_fit.apply(red), nir_fit.apply(nir)
+    return indices.evi2(df[f"{tgt}_red"], df[f"{tgt}_nir"]) - indices.evi2(red, nir)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--points", action="store_true")
-    ap.add_argument("--sample", action="store_true")
+    ap.add_argument("--clusters", action="store_true")
+    ap.add_argument("--submit", action="store_true")
+    ap.add_argument("--jobs", nargs="*", help="job names for --submit (default: all)")
+    ap.add_argument("--status", action="store_true")
     ap.add_argument("--fit", action="store_true", help="fit and write draft coefficients")
     ap.add_argument("--finalize", action="store_true", help="promote the reviewed draft")
-    ap.add_argument("--submit", action="store_true", help="batch table exports to Drive")
-    ap.add_argument("--years", type=int, nargs="*", help="limit --sample to these years")
-    ap.add_argument("--workers", type=int, default=6, help="parallel interactive requests")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -71,343 +94,129 @@ def main() -> None:
     out_dir = root / "outputs" / "harmonization"
     out_dir.mkdir(parents=True, exist_ok=True)
     gpkg = root / "raw" / "boundary" / "province255.gpkg"
-    points_csv = work / "points.csv"
+    log_path = root / "logs" / "ee_tasks.csv"
+    clusters_csv = work / "clusters.csv"
+    alloc_json = work / "cluster_allocation.json"
+    jobs = job_list(cfg)
+    box_px = h["clusters"]["box_px"]
 
-    etm_years = list(range(h["etm_to_oli_fit_years"][0], h["etm_to_oli_fit_years"][1] + 1))
-    tm_years = [
-        y
-        for y in range(cfg["period"]["start_year"], cfg["period"]["end_year"] + 1)
-        if y < 2012  # TM imaging ended November 2011
-    ]
-
-    if args.points or args.sample or args.submit:
+    if args.clusters or args.submit or args.status:
         import ee
 
         from rstrends import gee
 
-        gee.initialize(ee_project())
-        _, transform = gee.grid(cfg)
+        project = ee_project()
+        gee.initialize(project)
+        wkt, transform = gee.grid(cfg)
         proj = ee.Image(cfg["grid"]["reference_image"]).projection()
 
-        def sample_df(image, pts: pd.DataFrame, props) -> pd.DataFrame:
-            feats = [
-                ee.Feature(ee.Geometry.Point([r.lon, r.lat]), {p: getattr(r, p) for p in props})
-                for r in pts.itertuples()
-            ]
-            fc = image.sampleRegions(
-                collection=ee.FeatureCollection(feats),
-                properties=list(props),
-                scale=30,
-                projection=proj,
-                tileScale=4,
-                geometries=False,
-            )
-            return ee.data.computeFeatures({"expression": fc, "fileFormat": "PANDAS_DATAFRAME"})
-
-        def run_batches(image, pts, props, label, parts_dir=None):
-            """Sample in chunks of BATCH points, in parallel.
-
-            With parts_dir, each chunk is saved as soon as it arrives and chunks already on
-            disk are skipped, so a failure only repeats the failed chunks. Returns None if
-            any chunk failed.
-            """
-            parts = [pts.iloc[i : i + BATCH] for i in range(0, len(pts), BATCH)]
-            if parts_dir is not None:
-                parts_dir.mkdir(parents=True, exist_ok=True)
-
-            def part_path(k):
-                return None if parts_dir is None else parts_dir / f"part_{k:02d}.csv"
-
-            todo = [
-                k for k in range(len(parts)) if part_path(k) is None or not part_path(k).exists()
-            ]
-            out, failed, t0 = {}, [], time.perf_counter()
-
-            def one(k):
-                for attempt in range(1, 4):
-                    try:
-                        return sample_df(image, parts[k], props)
-                    except Exception as exc:  # network or Earth Engine error: retry this chunk
-                        print(
-                            f"     {label}: chunk {k} attempt {attempt} failed: {exc}", flush=True
-                        )
-                        time.sleep(5 * attempt)
-                raise RuntimeError(f"chunk {k} failed 3 times")
-
-            with ThreadPoolExecutor(max_workers=args.workers) as ex:
-                futs = {ex.submit(one, k): k for k in todo}
-                for fut in as_completed(futs):
-                    k = futs[fut]
-                    try:
-                        df = fut.result()
-                    except RuntimeError:
-                        failed.append(k)
-                        continue
-                    if parts_dir is not None:
-                        df.to_csv(part_path(k), index=False)
-                    out[k] = df
-            el = time.perf_counter() - t0
-            print(
-                f"     {label}: {len(todo)} of {len(parts)} chunks requested, {el:.0f} s, "
-                f"failed {failed}",
-                flush=True,
-            )
-            if failed:
-                return None
-            if parts_dir is not None:
-                return pd.concat(
-                    [pd.read_csv(part_path(k)) for k in range(len(parts))], ignore_index=True
+    if args.clusters:
+        if not clusters_csv.exists():
+            poly = gpd.read_file(gpkg).to_crs(pyproj.CRS.from_wkt(wkt)).geometry.iloc[0]
+            boxes = pick_boxes(poly, transform, h["clusters"]["n"], box_px, h["seed"])
+            pd.DataFrame(boxes, columns=["ulx", "uly"]).rename_axis("cid").to_csv(clusters_csv)
+            print(f"ok   {len(boxes)} boxes of {box_px} x {box_px} px -> {clusters_csv}")
+        if not alloc_json.exists():
+            cl = pd.read_csv(clusters_csv)
+            boxes = gee.boxes_fc(list(zip(cl.ulx, cl.uly, strict=True)), box_px, wkt)
+            y0, y1 = h["stable_years"]
+            hist = (
+                gee.stable_landcover(cfg, y0, y1)
+                .reduceRegion(
+                    reducer=ee.Reducer.frequencyHistogram(),
+                    geometry=boxes.geometry(),
+                    crs=proj,
+                    maxPixels=int(1e8),
                 )
-            return pd.concat(out.values(), ignore_index=True)
-
-    if args.points and not points_csv.exists():
-        y0, y1 = h["stable_years"]
-        stable = gee.stable_landcover(cfg, y0, y1)
-        poly = gpd.read_file(gpkg).to_crs(5070)
-        geom = poly.geometry.iloc[0]
-        shapely.prepare(geom)
-        rng = np.random.default_rng(h["seed"])
-        n_cand = h["sample_pixels"] * CANDIDATE_FACTOR
-        xmin, ymin, xmax, ymax = geom.bounds
-        pts = []
-        while sum(len(p) for p in pts) < n_cand:
-            xy = rng.uniform([xmin, ymin], [xmax, ymax], size=(n_cand, 2))
-            inside = shapely.contains_xy(geom, xy[:, 0], xy[:, 1])
-            pts.append(xy[inside])
-        xy = np.concatenate(pts)[:n_cand]
-        ll = gpd.GeoSeries(gpd.points_from_xy(xy[:, 0], xy[:, 1]), crs=5070).to_crs(4326)
-        cand = pd.DataFrame({"cid": np.arange(n_cand), "lon": ll.x, "lat": ll.y})
-        print(f"     {n_cand} candidate points inside the province")
-        got = run_batches(stable, cand, ["cid"], "stable class at candidates")
-        cand = cand.merge(got[["cid", "lc"]], on="cid", how="inner")
-        cand["lc"] = cand["lc"].astype(int)
-        counts = cand["lc"].value_counts().sort_index()
-        alloc = allocate(counts, h["sample_pixels"], h["min_points_per_class"])
-        chosen = pd.concat(
-            [
-                cand[cand.lc == c].sample(n=int(n), random_state=h["seed"])
-                for c, n in alloc.items()
-                if n > 0
-            ]
-        )
-        chosen = chosen.sort_values("cid").reset_index(drop=True)
-        chosen.insert(0, "pid", np.arange(len(chosen)))
-        chosen[["pid", "lon", "lat", "lc"]].to_csv(points_csv, index=False)
-        summary = pd.DataFrame(
-            {
-                "candidates_stable": counts,
-                "share": (counts / counts.sum()).round(4),
-                "sampled": alloc,
-            }
-        )
-        summary.to_csv(out_dir / "sample_allocation.csv")
-        print(f"ok   {len(chosen)} points, {len(cand)} of {n_cand} candidates were stable")
-        print(summary.to_string())
-
-    jobs = [(y, "LE07", "LC08", "etm", "oli") for y in etm_years]
-    jobs += [(y, "LT05", "LE07", "tm", "etm") for y in tm_years]
-    if args.years:
-        jobs = [j for j in jobs if j[0] in args.years]
+                .get("lc")
+                .getInfo()
+            )
+            counts = pd.Series({int(float(k)): int(v) for k, v in hist.items()}).sort_index()
+            alloc = allocate(counts, h["sample_pixels"], h["min_points_per_class"])
+            summary = pd.DataFrame(
+                {
+                    "stable_px_in_boxes": counts,
+                    "share": (counts / counts.sum()).round(4),
+                    "points": alloc,
+                }
+            )
+            summary.to_csv(out_dir / "sample_allocation_clustered.csv")
+            alloc_json.write_text(
+                json.dumps(
+                    {
+                        "classValues": [int(c) for c in alloc.index],
+                        "classPoints": [int(n) for n in alloc.values],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(summary.to_string())
+            print(f"ok   {int(alloc.sum())} points allocated -> {alloc_json}")
 
     if args.submit:
-        pts = pd.read_csv(points_csv)
-        fc_region = gee.province(gpkg).geometry().bounds()
-        fc_pts = ee.FeatureCollection(
-            [
-                ee.Feature(ee.Geometry.Point([r.lon, r.lat]), {"pid": int(r.pid), "lc": int(r.lc)})
-                for r in pts.itertuples()
-            ]
+        if not alloc_json.exists():
+            raise SystemExit("run --clusters first")
+        cl = pd.read_csv(clusters_csv)
+        alloc = json.loads(alloc_json.read_text(encoding="utf-8"))
+        boxes = gee.boxes_fc(list(zip(cl.ulx, cl.uly, strict=True)), box_px, wkt)
+        region = boxes.geometry()
+        y0, y1 = h["stable_years"]
+        base = (
+            gee.stable_landcover(cfg, y0, y1)
+            .addBands(ee.Image().int().paint(boxes, "cid").rename("cid"))
+            .addBands(ee.Image.pixelCoordinates(proj).rename(["x", "y"]))
         )
-        submitted = {r["description"] for r in tasklog.read(root / "logs" / "ee_tasks.csv", "H")}
-        for year, ka, kb, pa, pb in jobs:
-            desc = f"H_sample_{pa}_{pb}_{year}"
-            if desc in submitted:
-                print(f"skip {desc}: already submitted")
+        live = {
+            r["description"]
+            for r in tasklog.read(log_path, GROUP)
+            if gee.operation_summary(project, r["task_id"])["state"] not in ("FAILED", "CANCELLED")
+        }
+        for name in args.jobs or list(jobs):
+            if name not in jobs:
+                raise SystemExit(f"unknown job {name}. Jobs: {list(jobs)}")
+            ka, kb, pa, pb, years = jobs[name]
+            desc = f"H2_{name}"
+            if desc in live:
+                print(f"skip {desc}: already submitted and not failed")
                 continue
-            win = gee.common_window(cfg, ka, kb, year)
-            img = gee.sensor_medians(cfg, ka, year, fc_region, pa, win).addBands(
-                gee.sensor_medians(cfg, kb, year, fc_region, pb, win)
+            windows = [(y, gee.common_window(cfg, ka, kb, y)) for y in years]
+            stack = base.addBands(gee.sensor_stats(cfg, ka, windows, region, pa)).addBands(
+                gee.sensor_stats(cfg, kb, windows, region, pb)
             )
-            table = img.sampleRegions(
-                collection=fc_pts,
-                properties=["pid", "lc"],
+            table = stack.stratifiedSample(
+                numPoints=0,
+                classBand="lc",
+                region=region,
                 scale=30,
                 projection=proj,
+                seed=h["seed"],
+                classValues=alloc["classValues"],
+                classPoints=alloc["classPoints"],
                 tileScale=4,
                 geometries=False,
-            ).map(lambda f, y=year: f.set("year", y))
-            cols = ["pid", "lc", "year"] + [
-                f"{q}_{b}" for q in (pa, pb) for b in ("red", "nir", "n")
-            ]
+            ).map(lambda f, n=name: f.set("job", n))
             task = ee.batch.Export.table.toDrive(
                 collection=table,
                 description=desc,
                 folder=f"{cfg['export']['drive_folder_prefix']}H",
-                fileNamePrefix=f"sample_{pa}_{pb}_{year}",
+                fileNamePrefix=f"sample2_{name}",
                 fileFormat="CSV",
-                selectors=cols,
+                selectors=["job", "x", "y", "cid", "lc"] + stat_columns(pa, pb),
             )
             task.start()
-            tasklog.append(root / "logs" / "ee_tasks.csv", "H", desc, task.id)
-            print(f"ok   submitted {desc} ({task.id})")
+            tasklog.append(log_path, GROUP, desc, task.id)
+            print(f"ok   submitted {desc} ({task.id}), windows {windows}")
 
-    if args.sample:
-        pts = pd.read_csv(points_csv)
-        fc_region = gee.province(gpkg).geometry().bounds()
-        for year, ka, kb, pa, pb in jobs:
-            path = work / f"sample_{pa}_{pb}_{year}.csv"
-            if path.exists():
-                continue
-            win = gee.common_window(cfg, ka, kb, year)
-            img = gee.sensor_medians(cfg, ka, year, fc_region, pa, win).addBands(
-                gee.sensor_medians(cfg, kb, year, fc_region, pb, win)
-            )
-            parts_dir = work / "parts" / f"{pa}_{pb}_{year}"
-            df = run_batches(img, pts, ["pid", "lc"], f"{pa}->{pb} {year} {win}", parts_dir)
-            if df is None:
-                print(f"FAIL {pa}->{pb} {year}: rerun to retry only the failed chunks")
-                continue
-            df["year"] = year
-            df["window_start"], df["window_end"] = win
-            df.drop(columns=[c for c in ("geo",) if c in df], inplace=True)
-            df.to_csv(path, index=False)
-            print(f"ok   {path.name}: {len(df)} rows", flush=True)
-
-    def find_sample(name: str):
-        """Batch CSV downloaded from Drive (incoming/H) if present, else the interactive copy."""
-        for folder in (root / "incoming" / "H", work):
-            hits = sorted(folder.rglob(name)) if folder.exists() else []
-            if hits:
-                return hits[0]
-        return None
-
-    def read_sample(name: str) -> pd.DataFrame:
-        return pd.read_csv(find_sample(name))
+    if args.status:
+        for row in tasklog.read(log_path, GROUP):
+            s = gee.operation_summary(project, row["task_id"])
+            hrs = tasklog.eecu_hours(s["eecu_seconds"])
+            eecu = f"{hrs:.3f} EECU-h" if hrs is not None else "n/a"
+            print(f"{row['description']:<26} {s['state']:<10} {eecu}")
 
     if args.fit:
-        nmin = h["min_clear_obs_per_sensor"]
-        nb, seed = h["n_boot"], h["seed"]
-        missing = [
-            n
-            for n in [f"sample_etm_oli_{y}.csv" for y in etm_years]
-            + [f"sample_tm_etm_{y}.csv" for y in tm_years]
-            if find_sample(n) is None
-        ]
-        if missing:
-            raise SystemExit(f"samples missing, fit not run: {missing}")
-        rows, diag = [], []
-        draft = {"etm_to_oli": {}, "tm_to_etm": {}}
-
-        def usable(df, a, b):
-            need = [f"{q}_{k}" for q in (a, b) for k in ("red", "nir", "n")]
-            return df[(df[f"{a}_n"] >= nmin) & (df[f"{b}_n"] >= nmin)].dropna(subset=need)
-
-        def fit_row(name, label, df, src, tgt, boot=True):
-            out, fits = {}, {}
-            ev_src = indices.evi2(df[f"{src}_red"], df[f"{src}_nir"])
-            ev_tgt = indices.evi2(df[f"{tgt}_red"], df[f"{tgt}_nir"])
-            for band in ("red", "nir"):
-                x, y = df[f"{src}_{band}"], df[f"{tgt}_{band}"]
-                g = df["pid"]
-                k = nb if boot else 0
-                rma = fit_linear(x, y, "rma", groups=g, n_boot=k, seed=seed)
-                ols = fit_linear(x, y, "ols", groups=g, n_boot=k, seed=seed)
-                st_r, st_o = fit_stats(x, y, rma), fit_stats(x, y, ols)
-                fits[band] = rma
-                rows.append(
-                    {
-                        "transform": name,
-                        "years": label,
-                        "band": band,
-                        "n": st_r["n"],
-                        "n_points": df["pid"].nunique(),
-                        "r": st_r["r"],
-                        "r2": st_r["r2"],
-                        "ols_slope": ols.slope,
-                        "ols_intercept": ols.intercept,
-                        "rmse_ols": st_o["rmse"],
-                        "rma_slope": rma.slope,
-                        "rma_slope_lo": rma.slope_ci[0] if rma.slope_ci else np.nan,
-                        "rma_slope_hi": rma.slope_ci[1] if rma.slope_ci else np.nan,
-                        "rma_intercept": rma.intercept,
-                        "rma_intercept_lo": rma.intercept_ci[0] if rma.intercept_ci else np.nan,
-                        "rma_intercept_hi": rma.intercept_ci[1] if rma.intercept_ci else np.nan,
-                        "rmse_rma": st_r["rmse"],
-                        "evi2_offset_before": float(np.mean(ev_tgt - ev_src)),
-                    }
-                )
-                out[band] = [rma.slope, rma.intercept]
-            ev_adj = indices.evi2(
-                fits["red"].apply(df[f"{src}_red"]), fits["nir"].apply(df[f"{src}_nir"])
-            )
-            for r in rows[-2:]:
-                r["evi2_offset_after"] = float(np.mean(ev_tgt - ev_adj))
-            return out
-
-        def diagnostics(df, src, tgt, label):
-            """Correlation by clear-count bin and by land cover class, to explain scatter."""
-            m = np.minimum(df[f"{src}_n"], df[f"{tgt}_n"])
-            bins = pd.cut(m, [nmin - 1, 5, 9, 14, 1000], labels=["4-5", "6-9", "10-14", "15+"])
-            groups = [("min_clear_obs", k, g) for k, g in df.groupby(bins, observed=True)]
-            groups += [("nlcd_class", k, g) for k, g in df.groupby("lc")]
-            for band in ("red", "nir"):
-                for kind, key, grp in groups:
-                    if len(grp) < 30:
-                        continue
-                    x, y = grp[f"{src}_{band}"], grp[f"{tgt}_{band}"]
-                    diag.append(
-                        {
-                            "fit": label,
-                            "band": band,
-                            "group_type": kind,
-                            "group": key,
-                            "n": len(grp),
-                            "r": float(np.corrcoef(x, y)[0, 1]),
-                            "rma_slope": fit_linear(x, y, "rma").slope,
-                            "ols_slope": fit_linear(x, y, "ols").slope,
-                            "median_abs_diff": float(np.median(np.abs(y - x))),
-                        }
-                    )
-
-        etm_all = []
-        for y in etm_years:
-            df = usable(read_sample(f"sample_etm_oli_{y}.csv"), "etm", "oli")
-            fit_row("etm_to_oli", str(y), df, "etm", "oli", boot=False)
-            etm_all.append(df)
-        etm = pd.concat(etm_all, ignore_index=True)
-        label = f"{etm_years[0]}-{etm_years[-1]} pooled"
-        draft["etm_to_oli"] = fit_row("etm_to_oli", label, etm, "etm", "oli")
-        diagnostics(etm, "etm", "oli", f"etm_to_oli {label}")
-        for y in tm_years:
-            tm = usable(read_sample(f"sample_tm_etm_{y}.csv"), "tm", "etm")
-            draft["tm_to_etm"][str(y)] = fit_row("tm_to_etm", str(y), tm, "tm", "etm")
-            diagnostics(tm, "tm", "etm", f"tm_to_etm {y}")
-        table = pd.DataFrame(rows)
-        table.to_csv(out_dir / "fit_table.csv", index=False)
-        pd.DataFrame(diag).to_csv(out_dir / "fit_diagnostics.csv", index=False)
-        draft["method"] = "rma"
-        draft["status"] = "draft, not reviewed"
-        draft["note"] = f"point-years with >= {nmin} clear obs per sensor, common date window"
-        out_path = out_dir / "coefficients_draft.json"
-        out_path.write_text(json.dumps(draft, indent=2), encoding="utf-8")
-        pd.set_option("display.width", 250)
-        cols = [
-            "transform",
-            "years",
-            "band",
-            "n",
-            "r",
-            "r2",
-            "ols_slope",
-            "rma_slope",
-            "rma_intercept",
-            "rmse_ols",
-            "rmse_rma",
-            "evi2_offset_before",
-            "evi2_offset_after",
-        ]
-        print(table[cols].round(4).to_string(index=False))
-        print(f"ok   wrote {out_path} (draft, exports will not use it)")
+        fit(cfg, root, out_dir, jobs)
 
     if args.finalize:
         draft = json.loads((out_dir / "coefficients_draft.json").read_text(encoding="utf-8"))
@@ -415,6 +224,158 @@ def main() -> None:
         draft["finalized_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (out_dir / "coefficients.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
         print(f"ok   finalized {out_dir / 'coefficients.json'}")
+
+
+def fit(cfg: dict, root, out_dir, jobs) -> None:
+    h = cfg["harmonization"]
+    nmin, nb, seed = h["min_clear_obs_per_sensor"], h["n_boot"], h["seed"]
+    inc = root / "incoming" / "H"
+    files = {n: sorted(inc.rglob(f"sample2_{n}*.csv")) if inc.exists() else [] for n in jobs}
+    missing = [n for n, f in files.items() if not f]
+    if missing:
+        raise SystemExit(f"samples missing in {inc}, fit not run: {missing}")
+    roy = {m: h[f"roy2016_{m}"] for m in ("rma", "ols")}
+
+    fit_rows, class_rows, offset_rows = [], [], []
+    draft: dict = {"etm_to_oli": {}, "tm_to_etm": {}}
+
+    for name, (_, _, src, tgt, years) in jobs.items():
+        df = pd.read_csv(files[name][0])
+        n_all = len(df)
+        need = stat_columns(src, tgt)
+        df = df.dropna(subset=need)
+        df = df[(df[f"{src}_n"] >= nmin) & (df[f"{tgt}_n"] >= nmin)]
+        df = df[(df[[f"{p}_{b}" for p in (src, tgt) for b in ("red", "nir")]] != MISSING).all(1)]
+        label = f"{years[0]}-{years[-1]}" if len(years) > 1 else str(years[0])
+        transform = f"{src}_to_{tgt}"
+        print(f"     {name}: {len(df)} of {n_all} points have >= {nmin} clear obs per sensor")
+
+        fits: dict[str, dict[str, LinearFit]] = {"rma": {}, "deming": {}, "ols": {}}
+        for band in ("red", "nir"):
+            x, y = df[f"{src}_{band}"], df[f"{tgt}_{band}"]
+            ev_x = median_error_variance(df[f"{src}_{band}_sd"], df[f"{src}_n"])
+            ev_y = median_error_variance(df[f"{tgt}_{band}_sd"], df[f"{tgt}_n"])
+            lam = deming_lambda(ev_x, ev_y)
+            for method in fits:
+                f = fit_linear(
+                    x,
+                    y,
+                    method,
+                    groups=df["cid"],
+                    n_boot=0 if method == "ols" else nb,
+                    seed=seed,
+                    lam=lam if method == "deming" else None,
+                )
+                fits[method][band] = f
+                st = fit_stats(x, y, f)
+                fit_rows.append(
+                    {
+                        "transform": transform,
+                        "years": label,
+                        "band": band,
+                        "method": method,
+                        "n": st["n"],
+                        "n_clusters": df["cid"].nunique(),
+                        "slope": f.slope,
+                        "intercept": f.intercept,
+                        "slope_lo": f.slope_ci[0] if f.slope_ci else np.nan,
+                        "slope_hi": f.slope_ci[1] if f.slope_ci else np.nan,
+                        "intercept_lo": f.intercept_ci[0] if f.intercept_ci else np.nan,
+                        "intercept_hi": f.intercept_ci[1] if f.intercept_ci else np.nan,
+                        "r": st["r"],
+                        "r2": st["r2"],
+                        "rmse": st["rmse"],
+                        "bias": st["bias"],
+                        "lam": lam if method == "deming" else np.nan,
+                    }
+                )
+                for lc, g in df.groupby("lc"):
+                    if len(g) < 30:
+                        continue
+                    sg = fit_stats(g[f"{src}_{band}"], g[f"{tgt}_{band}"], f)
+                    class_rows.append(
+                        {
+                            "transform": transform,
+                            "years": label,
+                            "band": band,
+                            "method": method,
+                            "lc": lc,
+                            **sg,
+                        }
+                    )
+
+        variants = {
+            name_: (fits[m]["red"], fits[m]["nir"])
+            for name_, m in (("rma", "rma"), ("deming", "deming"), ("ols", "ols"))
+        }
+        if transform == "etm_to_oli":
+            for m, c in roy.items():
+                variants[f"roy2016_{m}"] = (
+                    LinearFit(c["red"]["slope"], c["red"]["intercept"], 0, np.nan),
+                    LinearFit(c["nir"]["slope"], c["nir"]["intercept"], 0, np.nan),
+                )
+        groups = [("all", df)] + [(int(lc), g) for lc, g in df.groupby("lc") if len(g) >= 30]
+        for key, g in groups:
+            before = evi2_offset(g, src, tgt)
+            row = {
+                "transform": transform,
+                "years": label,
+                "group": key,
+                "n": len(g),
+                "offset_none": float(np.mean(before)),
+                "rmsd_none": float(np.sqrt(np.mean(before**2))),
+            }
+            for v, (fr, fn) in variants.items():
+                after = evi2_offset(g, src, tgt, fr, fn)
+                row[f"offset_{v}"] = float(np.mean(after))
+                row[f"rmsd_{v}"] = float(np.sqrt(np.mean(after**2)))
+            offset_rows.append(row)
+
+        coeffs = {
+            m: {b: [fits[m][b].slope, fits[m][b].intercept] for b in ("red", "nir")} for m in fits
+        }
+        if transform == "etm_to_oli":
+            draft["etm_to_oli"] = coeffs["rma"]
+            draft["etm_to_oli_checks"] = {m: coeffs[m] for m in ("deming", "ols")}
+        else:
+            draft["tm_to_etm"][label] = coeffs["rma"]
+            draft.setdefault("tm_to_etm_checks", {})[label] = {
+                m: coeffs[m] for m in ("deming", "ols")
+            }
+
+    pd.DataFrame(fit_rows).to_csv(out_dir / "fit_table.csv", index=False)
+    pd.DataFrame(class_rows).to_csv(out_dir / "fit_by_class.csv", index=False)
+    offsets = pd.DataFrame(offset_rows)
+    offsets.to_csv(out_dir / "evi2_offsets.csv", index=False)
+    draft["method"] = "rma"
+    draft["status"] = "draft, not reviewed"
+    draft["note"] = (
+        f"clustered sample, points with >= {nmin} clear obs per sensor, common date window. "
+        "ETM+ to OLI pooled 2013-2017 per-point medians. TM to ETM+ per year."
+    )
+    out_path = out_dir / "coefficients_draft.json"
+    out_path.write_text(json.dumps(draft, indent=2), encoding="utf-8")
+    pd.set_option("display.width", 250)
+    cols = [
+        "transform",
+        "years",
+        "band",
+        "method",
+        "n",
+        "n_clusters",
+        "slope",
+        "slope_lo",
+        "slope_hi",
+        "intercept",
+        "r",
+        "r2",
+        "rmse",
+        "bias",
+        "lam",
+    ]
+    print(pd.DataFrame(fit_rows)[cols].round(4).to_string(index=False))
+    print(offsets[offsets.group == "all"].round(4).to_string(index=False))
+    print(f"ok   wrote {out_path} (draft, exports will not use it)")
 
 
 if __name__ == "__main__":

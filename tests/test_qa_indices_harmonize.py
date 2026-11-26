@@ -121,3 +121,29 @@ def test_fit_stats_perfect_and_noisy():
     assert s_ols["rmse"] <= s_rma["rmse"]  # OLS minimizes squared error in y
     assert s_ols["bias"] == pytest.approx(0, abs=1e-12)
     assert s_ols["n"] == 200
+
+
+def test_deming_special_cases_and_recovery():
+    rng = np.random.default_rng(5)
+    t = rng.uniform(0, 1, 20000)
+    x = t + rng.normal(0, 0.05, t.size)
+    y = 0.1 + 1.2 * t + rng.normal(0, 0.1, t.size)
+    lam_true = 0.1**2 / 0.05**2
+    dem = harmonize.fit_linear(x, y, "deming", lam=lam_true)
+    assert dem.slope == pytest.approx(1.2, abs=0.02)
+    assert dem.intercept == pytest.approx(0.1, abs=0.02)
+    # RMA is Deming with lam = var(y) / var(x), OLS is the large-lam limit
+    rma = harmonize.fit_linear(x, y, "rma")
+    lam_rma = y.var() / x.var()
+    assert harmonize.fit_linear(x, y, "deming", lam=lam_rma).slope == pytest.approx(rma.slope)
+    ols = harmonize.fit_linear(x, y, "ols")
+    assert harmonize.fit_linear(x, y, "deming", lam=1e9).slope == pytest.approx(ols.slope, 1e-6)
+    with pytest.raises(ValueError):
+        harmonize.fit_linear(x, y, "deming")
+
+
+def test_median_error_variance_and_lambda():
+    v = harmonize.median_error_variance([0.02, 0.04], [10, 0])
+    assert v[0] == pytest.approx(np.pi / 2 * 0.0004 / 10)
+    assert np.isnan(v[1])
+    assert harmonize.deming_lambda([1.0, 3.0], [4.0, np.nan]) == pytest.approx(2.0)

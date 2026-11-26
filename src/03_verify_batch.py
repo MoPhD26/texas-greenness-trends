@@ -26,6 +26,7 @@ import rasterio
 from rstrends.batches import export_bands
 from rstrends.config import data_dir, ee_project, load_config
 
+MAX_ZERO_SHARE = 0.01  # band 1 (EVI2 x 10000) is exactly 0 in far fewer pixels than this
 PILOT_BANDS = 7  # the pilot used the earlier design: 3 indices, 3 counts, acquisitions
 
 
@@ -73,6 +74,7 @@ def main() -> None:
     nodata = cfg["export"]["nodata"]
 
     problems, rows, total_bytes, total_px, raw_bytes = [], [], 0, 0, 0
+    nd_share = zero_share = b1_px = 0.0
     for path in tifs:
         with rasterio.open(path) as src:
             t = src.transform
@@ -91,6 +93,12 @@ def main() -> None:
             if src.nodata != nodata:
                 problems.append(f"{path.name}: nodata {src.nodata}, expected {nodata}")
             total_px += src.width * src.height
+            # Masked pixels must be nodata, not 0. Every file's bounding box reaches outside
+            # the province, and an EVI2 of exactly 0 is rare, so read band 1 at 1/16 scale.
+            b1 = src.read(1, out_shape=(max(1, src.height // 16), max(1, src.width // 16)))
+            nd_share += float((b1 == nodata).sum())
+            zero_share += float((b1 == 0).sum())
+            b1_px += b1.size
         size = path.stat().st_size
         total_bytes += size
         rows.append(
@@ -105,6 +113,12 @@ def main() -> None:
 
     print(f"files: {len(tifs)}, on disk {total_bytes / 1e9:.2f} GB, grid {total_px / 1e6:.0f} M px")
     print(f"uncompressed bbox {raw_bytes / 1e9:.2f} GB, ratio {total_bytes / raw_bytes:.3f}")
+    nd_share, zero_share = nd_share / b1_px, zero_share / b1_px
+    print(f"band 1: nodata {nd_share:.1%} of pixels, exactly 0 {zero_share:.2%}")
+    if nd_share == 0:
+        problems.append("band 1 has no nodata pixels, so masked pixels were not written as nodata")
+    if zero_share > MAX_ZERO_SHARE:
+        problems.append(f"band 1 is exactly 0 in {zero_share:.1%} of pixels (masked written as 0?)")
     if problems:
         print("FAIL")
         for p in problems:

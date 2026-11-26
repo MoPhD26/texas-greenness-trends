@@ -79,6 +79,9 @@ def main() -> None:
         ids = []
         for year in batches[name]:
             img = gee.annual_composite_single_pass(cfg, year, fc, filt, harm)
+            # Write masked pixels as nodata explicitly. The pilot showed that the noData format
+            # option alone leaves masked pixels as 0, which is a valid EVI2 value.
+            img = img.unmask(cfg["export"]["nodata"], False)
             desc = f"{name}_main_{year}"
             task = ee.batch.Export.image.toDrive(
                 image=img,

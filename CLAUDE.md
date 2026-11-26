@@ -57,3 +57,4 @@ Don't add heavy dependencies without asking. If one library would replace three,
 * Deleting files or folders, including files in Google Drive
 * Changing system or user settings outside this repo (environment variables, PATH, installed software outside the rs-trends environment)
 * Any step expected to run longer than 30 minutes
+* Any interactive Earth Engine request expected to use more than 2 EECU-hours, with an estimate first. Default to batch tasks for anything heavy.

@@ -1,8 +1,8 @@
-# Phase 1: Literature Review and Study Plan (revision 4)
+# Phase 1: Literature Review and Study Plan (revision 5)
 
 Texas greenness trends, Bailey's Prairie Parkland (Subtropical) Province 255, 2000-2026
 
-Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
+Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Revision 5 (2026-11-26, later the same day) changes the harmonization sample design and fit (Section 0.0, last rows). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
 
 ---
 
@@ -17,8 +17,10 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Index checks | NIRv and kNDVI run on a 10% random sample of 512 x 512 chunks, not province wide. Index agreement is reported as sample statistics with confidence intervals. |
 | Robust trend | A pixel is a robust trend when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
 | Endpoint check | Leave-one-year-out runs only on pixels that are FDR-significant in the EVI2 core run. |
-| Harmonization | Sensor medians for each fit use the dates both sensors cover (for example, 2013 starts April 11 for both Landsat 7 and Landsat 8). Samples are drawn with interactive requests in logged chunks. Coefficients stay in draft until reviewed. |
-| Earth Engine tier | Contributor tier planned after the cost test review. No full exports until confirmed. |
+| Harmonization | Sensor medians for each fit use the dates both sensors cover (for example, 2013 starts April 11 for both Landsat 7 and Landsat 8). Coefficients stay in draft until reviewed. Revision 5 replaces the sample design (below). |
+| Earth Engine tier | Contributor tier (1,000 EECU-hours per month) since 2026-11-26. Every report carries a budget line: spent this month, committed, remaining. For each month, stop and ask if planned work would push past 850. No full exports until the harmonization results and the cost check are reviewed together. |
+| Harmonization sample (revision 5) | About 10,000 stable Annual NLCD pixels in 200 random grid-aligned boxes of 64 x 64 pixels (1.92 km), drawn as Earth Engine batch tasks only. Points in a box share the Landsat tiles Earth Engine reads, which makes the sample far cheaper than scattered points. The interactive sample of scattered points used about 30 EECU-hours per year and pushed the project past its monthly quota. |
+| Harmonization fit (revision 5) | ETM+ to OLI: one fit on per-point medians over all 2013-2017 dates both sensors cover, not per season. TM to ETM+: one fit per year 2000-2011, for the Landsat 5 drift. A point enters a fit only with at least 10 clear observations per sensor. RMA is primary (comparable with Roy et al. 2016). Deming regression is a check, with the error variance ratio estimated from each point's sampling variance of the median. Confidence intervals come from a cluster bootstrap that resamples boxes. Fit statistics and the EVI2 offset each transform removes are reported overall and by land cover class. Bias removal is the main criterion, not correlation. |
 
 ---
 
@@ -235,11 +237,11 @@ The 40 numbered science papers include 37 core papers plus 3 kept only for frami
 
 **Recommended procedure.**
 1. **Bands.** Only red and NIR need harmonizing, because all three indices (EVI2, NIRv, kNDVI) use only those two bands. This is a real advantage of dropping the blue band.
-2. **ETM+ to OLI.** Fit using the 2013-2017 seasons, when both satellites flew and Landsat 7 was still in its maintained orbit (last maneuver August 2017). For a stratified random sample of about 30,000 stable Annual NLCD pixels, compute separate Landsat 7 and Landsat 8 median red and NIR over the dates both sensors cover within March-October (revision 4). Fit reduced major axis regression per band. RMA is used because both sensors have measurement error, and OLS would bias the slope toward zero (Roy et al. 2016 report both).
-3. **TM to ETM+, year by year.** For each year 2000-2011, fit the same way using Landsat 5 and Landsat 7 medians from that year. Landsat 7 held its orbit during those years, so year-specific coefficients absorb the Landsat 5 drift that Zhang and Roy (2016) and Roy et al. (2020) documented, including its fast 2003-2007 change.
+2. **ETM+ to OLI.** Fit using the 2013-2017 seasons, when both satellites flew and Landsat 7 was still in its maintained orbit (last maneuver August 2017). For a stratified sample of about 10,000 stable Annual NLCD pixels in 200 random boxes (revision 5), compute one Landsat 7 and one Landsat 8 median red and NIR per pixel over all March-October dates in 2013-2017 that both sensors cover. Pooling the five years gives each median many clear dates, which cuts the scatter that single-season medians showed. Pixels need at least 10 clear observations from each sensor. Fit reduced major axis regression per band. RMA is used because both sensors have measurement error, and OLS would bias the slope toward zero (Roy et al. 2016 report both). Deming regression with an error variance ratio estimated from the data is a check.
+3. **TM to ETM+, year by year.** For each year 2000-2011, fit the same way using Landsat 5 and Landsat 7 medians from that year (same points, same 10 observation minimum). Landsat 7 held its orbit during those years, so year-specific coefficients absorb the Landsat 5 drift that Zhang and Roy (2016) and Roy et al. (2020) documented, including its fast 2003-2007 change.
 4. **Chain.** TM goes to ETM+ (by year) and then to OLI. Landsat 9 is treated as OLI (Gross et al. 2022).
 5. **Apply per observation.** A median of one band commutes with an increasing linear transform, so coefficients fitted on season medians apply directly to each observation before indices are computed.
-6. **Report.** The coefficients, their confidence intervals, how far they differ from Roy et al. (2016), and the EVI2 offset each one removes. If our coefficients are close to Roy's, that is useful confirmation. If not, that is itself a finding about Collection 2.
+6. **Report.** The coefficients, their cluster-bootstrap confidence intervals, how far they differ from Roy et al. (2016) OLS and RMA, and the EVI2 offset each one removes, overall and by land cover class. Bias removal is the main criterion. If our coefficients are close to Roy's, that is useful confirmation. If not, that is itself a finding about Collection 2.
 7. **Comparison run.** The full EVI2 trend is repeated with Roy et al. (2016) coefficients and the difference in slopes is reported.
 
 **Why season medians and not same-day pairs.** Landsat 5 and 7, and Landsat 7 and 8, image the same path 8 days apart, so true same-day pairs exist only in narrow sidelap zones. Matching season medians fits our use exactly, because our composites are season medians. Different acquisition dates add noise to the fit but no systematic bias, given thousands of sample pixels.
@@ -385,7 +387,7 @@ Revised for revision 3: each pixel-year now carries three sub-season clear count
 | ETM+ only subset, 2000-2019 | EVI2 plus 3 sub-season clear counts, 5 bytes per pixel per year | 23.1 GB | about 10-14 GB |
 | OLI only subset, 2013-2019 | Same bands (2020-2026 is already OLI only in the main stack) | 8.1 GB | about 4-5 GB |
 | Stable pixel mask and class | 2 bands, uint8 | 0.5 GB | under 0.3 GB |
-| Harmonization sample | about 30,000 points by sensor by year, red and NIR | under 0.1 GB | under 0.1 GB |
+| Harmonization sample | about 10,000 points, 13 tables (one pooled 2013-2017, twelve TM years), red and NIR medians, spread, counts | under 0.1 GB | under 0.1 GB |
 | SPEI | monthly, 4 km | under 0.5 GB | under 0.5 GB |
 | **Total** | | **about 95 GB** | **about 45-60 GB** |
 
@@ -440,7 +442,7 @@ Each batch is at most about 10 GB compressed, under the 15 GB free Drive limit w
 | B1-B5 | Main stack 2000-2004, 2005-2009, 2010-2014, 2015-2019, 2020-2024, with the ETM+ only and OLI only subset bands folded into the years they cover (revision 4) |
 | B6 | Main stack 2025-2026, stable pixel mask, SPEI |
 
-Revision 4 removes the separate subset batches (formerly B7-B9) and moves the harmonization sample to interactive requests.
+Revision 4 removes the separate subset batches (formerly B7-B9). Revision 5 draws the harmonization sample as 13 batch table tasks (Section 0.0).
 
 Steps for every batch:
 

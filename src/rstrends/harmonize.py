@@ -7,8 +7,15 @@ Reduced major axis (RMA) regression is primary because both sensors carry measur
 error, and ordinary least squares (OLS) would bias the slope toward zero. Roy et al. (2016)
 report both. OLS is also fitted here so our numbers can be compared with Roy's OLS set.
 
-Confidence intervals use a cluster bootstrap: whole sample points are resampled, so
-repeated years at the same point are not treated as independent.
+Deming regression is a check on RMA. It needs the ratio of the two sensors' error
+variances (lam = error variance of y over error variance of x). RMA is the special case
+lam = var(y) / var(x). Here lam is estimated from the data: each point's sensor median carries
+sampling error from the few clear dates behind it, approximated by (pi / 2) * sd^2 / n, the
+large-sample variance of the median of normally distributed values.
+OLS is the limit lam -> infinity.
+
+Confidence intervals use a cluster bootstrap: whole clusters of nearby sample points are
+resampled, so points that share a location are not treated as independent.
 """
 
 from __future__ import annotations
@@ -53,7 +60,29 @@ def _ols(x, y):
     return slope, ym - slope * xm, np.corrcoef(x, y)[0, 1]
 
 
-_METHODS = {"rma": _rma, "ols": _ols}
+def _deming(x, y, lam):
+    xm, ym = x.mean(), y.mean()
+    sxx = np.mean((x - xm) ** 2)
+    syy = np.mean((y - ym) ** 2)
+    sxy = np.mean((x - xm) * (y - ym))
+    d = syy - lam * sxx
+    slope = (d + np.sqrt(d * d + 4 * lam * sxy * sxy)) / (2 * sxy)
+    return slope, ym - slope * xm, np.corrcoef(x, y)[0, 1]
+
+
+_METHODS = {"rma": _rma, "ols": _ols, "deming": _deming}
+
+
+def median_error_variance(sd, n):
+    """Large-sample sampling variance of a median of n values with standard deviation sd."""
+    sd, n = np.asarray(sd, dtype=np.float64), np.asarray(n, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(n > 0, np.pi / 2 * sd**2 / n, np.nan)
+
+
+def deming_lambda(err_var_x, err_var_y) -> float:
+    """Error variance ratio (y over x) from per-point error variances."""
+    return float(np.nanmean(err_var_y) / np.nanmean(err_var_x))
 
 
 def fit_linear(
@@ -64,14 +93,25 @@ def fit_linear(
     n_boot: int = 0,
     ci: float = 0.95,
     seed: int = 0,
+    lam: float | None = None,
 ) -> LinearFit:
     """Fit target y against source x.
 
-    groups: optional cluster label per observation (for example a point ID). The bootstrap
+    groups: optional cluster label per observation (for example a cluster ID). The bootstrap
     resamples clusters. Without groups, each observation is its own cluster.
+    lam: error variance ratio, required for method "deming".
     """
     if method not in _METHODS:
         raise ValueError(f"method must be one of {sorted(_METHODS)}")
+    if method == "deming":
+        if lam is None or not lam > 0:
+            raise ValueError("deming needs a positive error variance ratio lam")
+        base = _METHODS[method]
+
+        def fn(a, b):
+            return base(a, b, lam)
+    else:
+        fn = _METHODS[method]
     xr = np.asarray(x, dtype=np.float64).ravel()
     yr = np.asarray(y, dtype=np.float64).ravel()
     g = np.arange(xr.size) if groups is None else np.asarray(groups).ravel()
@@ -79,7 +119,6 @@ def fit_linear(
     xr, yr, g = xr[ok], yr[ok], g[ok]
     if xr.size < 3:
         raise ValueError("need at least 3 valid pairs")
-    fn = _METHODS[method]
     slope, intercept, r = fn(xr, yr)
     slope_ci = intercept_ci = None
     if n_boot > 0:
