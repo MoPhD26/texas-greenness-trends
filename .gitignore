@@ -1,0 +1,46 @@
+# ---- Secrets and credentials (never commit) ----
+.env
+.env.*
+.netrc
+_netrc
+*.netrc
+credentials
+credentials.json
+*service-account*.json
+*-key.json
+*.pem
+*.p12
+.config/
+.claude/settings.local.json
+
+# ---- Data (all data lives in C:\rsdata, outside the repo) ----
+# These rules are a second safeguard in case a file lands here by mistake.
+data/
+rsdata/
+incoming/
+*.tif
+*.tiff
+*.vrt
+*.zarr/
+*.nc
+*.npz
+*.npy
+*.parquet
+*.zip
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+manifest.csv
+
+# ---- Python and tools ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+dask-worker-space/
+*.log

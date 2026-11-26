@@ -1,0 +1,18 @@
+# Gitleaks configuration: the built-in rules (API keys, tokens, private keys, Google
+# service account keys, and many more) plus project-specific rules.
+title = "Project secret scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "earth-engine-project-hardcoded"
+description = "Earth Engine project ID written into code or config instead of the EE_PROJECT environment variable"
+regex = '''(?i)(ee_project\s*[:=]\s*|initialize\(\s*project\s*=\s*)["'][a-z][a-z0-9-]{4,28}[a-z0-9]["']'''
+keywords = ["ee_project", "initialize"]
+
+[[rules]]
+id = "earthdata-netrc-login"
+description = "NASA Earthdata login in netrc format"
+regex = '''(?i)machine\s+urs\.earthdata\.nasa\.gov\s+login\s+\S+\s+password\s+\S+'''
+keywords = ["urs.earthdata.nasa.gov"]

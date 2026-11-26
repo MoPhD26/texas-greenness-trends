@@ -1,0 +1,35 @@
+# Conda environment for the Texas greenness trends study.
+# Source of truth for dependencies. Create with:
+#   CONDA_CHANNEL_PRIORITY=strict conda env create -f environment.yml
+name: rs-trends
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  # Earth Engine access and compositing
+  - earthengine-api      # Earth Engine Python client
+  - geemap               # Earth Engine helpers and interactive maps
+  # Rasters and arrays
+  - numpy
+  - xarray
+  - rioxarray            # rasterio-backed GeoTIFF I/O for xarray
+  - rasterio             # GDAL raster I/O
+  - dask                 # chunked, parallel local computation (includes distributed)
+  - zarr                 # chunked output store, enables resumable chunk writes
+  # Vectors and projections
+  - geopandas
+  - shapely
+  - pyproj
+  # Statistics
+  - scipy
+  - pandas
+  - statsmodels          # RESTREND regressions and break tests
+  - pymannkendall        # reference implementation used to test our vectorized trend code
+  # Plotting
+  - matplotlib
+  # Configuration
+  - pyyaml               # reads config/config.yaml
+  # Quality
+  - pytest
+  - ruff
