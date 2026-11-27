@@ -5,6 +5,11 @@ pixels, alignment to the Annual NLCD grid, band count, data type, and nodata. Wr
 SHA-256 for every file to <data>/manifest.csv, reports sizes and compression, moves the
 files to <data>/raw/<batch>, and marks the batch verified. Nothing is deleted.
 
+Also checks that every year of the batch is present, that band names match the expected order,
+and that each year's tiles together cover the export grid (gee.export_region).
+
+  --keep   check and record only, leave the files in incoming (nothing is moved)
+
 Run:
   conda run -n rs-trends python src/03_verify_batch.py --batch P
 """
@@ -52,6 +57,7 @@ def sha256(path) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
+    ap.add_argument("--keep", action="store_true", help="leave the files in incoming")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -73,6 +79,12 @@ def main() -> None:
     nlcd_crs = pyproj.CRS.from_wkt(wkt)
     a, _, x0, _, e, y0 = transform
     nodata = cfg["export"]["nodata"]
+    ledger_path = root / "logs" / "batches.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {}
+    years_expected = set(ledger.get(args.batch, {}).get("years", []))
+    _, (gx, gy, gw, gh) = gee.export_region(cfg, root / "raw" / "boundary" / "province255.gpkg")
+    extent: dict[int, list[float]] = {}
+    band_names: dict[str, tuple] = {}
 
     problems, rows, total_bytes, total_px, raw_bytes = [], [], 0, 0, 0
     nd_share = zero_share = b1_px = 0.0
@@ -94,6 +106,21 @@ def main() -> None:
             if src.nodata != nodata:
                 problems.append(f"{path.name}: nodata {src.nodata}, expected {nodata}")
             total_px += src.width * src.height
+            m = re.search(r"(main|subsets)_(\d{4})", path.name)
+            if m and args.batch != "P":
+                yr = int(m.group(2))
+                want = (subset_bands if m.group(1) == "subsets" else export_bands)(cfg, yr)
+                if tuple(src.descriptions) != tuple(want):
+                    problems.append(f"{path.name}: band names {src.descriptions}, expected {want}")
+                band_names[m.group(1)] = tuple(src.descriptions)
+                b = src.bounds
+                e0 = extent.setdefault(yr, [b.left, b.bottom, b.right, b.top])
+                extent[yr] = [
+                    min(e0[0], b.left),
+                    min(e0[1], b.bottom),
+                    max(e0[2], b.right),
+                    max(e0[3], b.top),
+                ]
             # Masked pixels must be nodata, not 0. Every file's bounding box reaches outside
             # the province, and an EVI2 of exactly 0 is rare, so read band 1 at 1/16 scale.
             b1 = src.read(1, out_shape=(max(1, src.height // 16), max(1, src.width // 16)))
@@ -112,6 +139,20 @@ def main() -> None:
             }
         )
 
+    if extent:
+        print(f"years present: {sorted(extent)}")
+        missing = years_expected - set(extent)
+        if missing:
+            problems.append(f"years missing: {sorted(missing)}")
+        for name, bands in band_names.items():
+            print(f"{name} bands: {', '.join(bands)}")
+        if args.batch.startswith("B"):
+            want_ext = [gx, gy - gh * abs(e), gx + gw * a, gy]
+            for yr, ext in sorted(extent.items()):
+                if any(abs(u - v) > 1e-6 for u, v in zip(ext, want_ext, strict=True)):
+                    problems.append(f"{yr}: tiles cover {ext}, export grid is {want_ext}")
+            print(f"extent per year matches the export grid {gw} x {gh} px at ({gx}, {gy})")
+    print(f"crs: {nlcd_crs.name}, nodata {nodata}")
     print(f"files: {len(tifs)}, on disk {total_bytes / 1e9:.2f} GB, grid {total_px / 1e6:.0f} M px")
     print(f"uncompressed bbox {raw_bytes / 1e9:.2f} GB, ratio {total_bytes / raw_bytes:.3f}")
     nd_share, zero_share = nd_share / b1_px, zero_share / b1_px
@@ -133,16 +174,16 @@ def main() -> None:
         if new:
             w.writeheader()
         w.writerows(rows)
-    dest = root / "raw" / args.batch
-    dest.mkdir(parents=True, exist_ok=True)
-    for path in tifs:
-        shutil.move(str(path), dest / path.name)
-    ledger_path = root / "logs" / "batches.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {}
+    dest = inc if args.keep else root / "raw" / args.batch
+    if not args.keep:
+        dest.mkdir(parents=True, exist_ok=True)
+        for path in tifs:
+            shutil.move(str(path), dest / path.name)
     ledger.setdefault(args.batch, {})["verified"] = True
     ledger[args.batch]["bytes"] = total_bytes
+    ledger[args.batch]["location"] = str(dest)
     ledger_path.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
-    print(f"PASS  moved {len(tifs)} files to {dest}")
+    print(f"PASS  {len(tifs)} files " + (f"left in {dest}" if args.keep else f"moved to {dest}"))
 
 
 if __name__ == "__main__":
