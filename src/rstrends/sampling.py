@@ -90,3 +90,23 @@ def cluster_folds(clusters, k: int, seed: int) -> np.ndarray:
     fold_of = np.empty(u.size, dtype=int)
     fold_of[order] = np.arange(u.size) % k
     return fold_of[inv]
+
+
+def grid_offset(x: float, y: float, transform) -> tuple[int, int]:
+    """(col, row) of the pixel whose upper-left corner is (x, y) on the grid of transform.
+
+    transform is a GDAL-style list [a, 0, x0, 0, e, y0]. Raises if (x, y) is not a pixel corner,
+    so an export region that would shift the grid is caught before submission.
+    """
+    a, _, x0, _, e, y0 = transform
+    col, row = (x - x0) / a, (y - y0) / e
+    if abs(col - round(col)) > 1e-9 or abs(row - round(row)) > 1e-9:
+        raise ValueError(f"({x}, {y}) is not a pixel corner of the grid")
+    return int(round(col)), int(round(row))
+
+
+def chunk_bounds(ulx: float, uly: float, w: int, h: int, transform) -> tuple[float, ...]:
+    """(xmin, ymin, xmax, ymax) of a chunk, checked to sit on pixel corners of the grid."""
+    a, e = transform[0], transform[4]
+    grid_offset(ulx, uly, transform)
+    return ulx, uly + h * e, ulx + w * a, uly

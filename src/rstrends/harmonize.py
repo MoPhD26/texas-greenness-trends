@@ -227,3 +227,20 @@ def fit_stats(x, y, fit: LinearFit) -> dict[str, float]:
         "rmse": float(np.sqrt(np.mean(resid**2))),
         "bias": float(np.mean(resid)),
     }
+
+
+def roy_variant(harm: dict, roy_rma: dict) -> dict:
+    """Coefficients for the Roy et al. (2016) comparison run.
+
+    Only the ETM+ to OLI step changes: it becomes Roy's RMA line (one line, no land cover
+    groups). The study's yearly TM to ETM+ lines are kept, so TM is taken to ETM+ with our fit
+    and then to OLI with Roy's. The comparison therefore isolates the ETM+ to OLI step.
+    roy_rma layout: {"red": {"slope": s, "intercept": i}, "nir": {...}} (config roy2016_rma).
+    """
+    out = {k: v for k, v in harm.items() if k not in ("etm_to_oli_by_group",)}
+    out["etm_to_oli"] = {
+        b: [float(roy_rma[b]["slope"]), float(roy_rma[b]["intercept"])] for b in ("red", "nir")
+    }
+    out["etm_to_oli_mode"] = "single"
+    out["variant"] = "roy2016_rma_etm_to_oli"
+    return out

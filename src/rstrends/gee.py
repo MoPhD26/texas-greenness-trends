@@ -390,6 +390,58 @@ def annual_subsets(
     return out.select(subset_bands(cfg, year)).updateMask(mask).set("year", year)
 
 
+def chunk_rectangle(cfg: dict, ulx: float, uly: float, w: int, h: int) -> ee.Geometry:
+    """One chunk as a planar rectangle on the Annual NLCD grid (refuses off-grid corners)."""
+    from rstrends.sampling import chunk_bounds
+
+    t = [float(v) for v in cfg["grid"]["crs_transform"]]
+    xmin, ymin, xmax, ymax = chunk_bounds(ulx, uly, w, h, t)
+    proj = ee.Image(cfg["grid"]["reference_image"]).projection()
+    return ee.Geometry.Rectangle([xmin, ymin, xmax, ymax], proj, False)
+
+
+def chunk_multi_year(
+    cfg: dict,
+    product: str,
+    years,
+    fc: ee.FeatureCollection,
+    region: ee.Geometry,
+    harm: dict,
+) -> ee.Image:
+    """One chunk, years as bands, masked to the province.
+
+    product "subsets": each year's single-sensor subset bands (as annual_subsets).
+    product "roy": each year's EVI2 median over all sensors, with harm already the Roy variant
+    (rstrends.harmonize.roy_variant). Clear counts are not repeated: the observations are the
+    main export's, so its counts apply.
+    Scenes are filtered by the chunk. Band order matches rstrends.batches.multi_year_bands.
+    """
+    from rstrends.batches import multi_year_bands, subset_bands
+
+    out = None
+    for y in years:
+        names = subset_bands(cfg, y) if product == "subsets" else ["evi2"]
+        by_family = observations_by_family(cfg, y, region, harm)
+        if product == "subsets":
+            parts = _subset_stacks(cfg, y, by_family)
+        elif product == "roy":
+            fams = list(by_family)
+            obs = by_family[fams[0]]
+            for f in fams[1:]:
+                obs = obs.merge(by_family[f])
+            scale = cfg["indices"]["storage_scale"]
+            parts = [obs.select("evi2").median().multiply(scale).round().toInt16()]
+        else:
+            raise ValueError(f"unknown product {product}")
+        img = parts[0]
+        for p in parts[1:]:
+            img = img.addBands(p)
+        # parts come in subset_bands order (evi2, then counts, per subset in config order)
+        img = img.rename([f"y{y}_{b}" for b in names])
+        out = img if out is None else out.addBands(img)
+    return out.select(multi_year_bands(cfg, years, product)).updateMask(province_mask(fc))
+
+
 def export_region(cfg: dict, gpkg_path):
     """Province bounding box snapped to the Annual NLCD grid, as a planar rectangle.
 
