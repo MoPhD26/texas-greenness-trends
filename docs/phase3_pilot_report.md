@@ -357,3 +357,40 @@ Proposed waves, once the coefficients are final:
 3. Download and verify each batch as it lands, without overviews (about 76 GB in Drive at peak if nothing is cleared).
 
 If the first year comes in more than 20% above projection, I stop and re-plan before submitting more.
+
+## 13. Finalization and pre-launch cost check (2026-11-27 UTC)
+
+### 13.1 Coefficients finalized
+
+Version harm-v1-2026-11-27, `outputs/harmonization/coefficients.json`, SHA-256 fc0ad388e957a281bcc39e32f6f5d2a0d7e6799a8d7c626cc88eb4cc16bbaac3 (in the config, checked by the export script). ETM+ to OLI per land cover group, TM to ETM+ per year, RMA.
+
+| Group | Red slope | Red intercept | NIR slope | NIR intercept |
+|---|---|---|---|---|
+| Woody (41, 42, 43, 52, 90) | 0.9527 | -0.0029 | 1.0690 | -0.0075 |
+| Herbaceous (71, 81, 82, 95) | 1.0087 | -0.0066 | 1.1027 | -0.0129 |
+| Developed and barren (21-24, 31) | 1.0616 | -0.0146 | 1.2529 | -0.0633 |
+| Other classes and pixels without a class (single fit) | 1.0161 | -0.0071 | 1.1294 | -0.0223 |
+
+Annual NLCD has every year 2000-2025. 2026 uses 2025. Pixels without a class take the single fit.
+
+### 13.2 Production design check (64 x 64 pixels, 2015, final coefficients)
+
+The revision 6 composite matches the pilot design exactly in all six main bands. Its ETM+ only EVI2 matches an independent Landsat 7 median exactly. The cloud skip changed no pixel in this window.
+
+### 13.3 Tile cost test, variant E (revision 6 production design with group harmonization)
+
+| Variant | EECU-hours | Ratio to A |
+|---|---|---|
+| A: pilot design | 0.519 | 1.00 |
+| D: revision 4 production | 0.672 | 1.29 |
+| **E: revision 6 production** | **1.095** | **2.11** |
+
+E ran on its first attempt. It is above the 1 EECU-hour expected for the test and about twice A. Projection with E for 2000-2019 and the pilot computation for 2020-2026:
+
+| Batch | B1 | B2 | B3 | B4 | B5 | B6 | Total |
+|---|---|---|---|---|---|---|---|
+| EECU-hours | 348 | 365 | 335 | 379 | 151 | 76 | about 1,655 (2,110 if the outline filter saves nothing) |
+
+The November wave (B4, B1, B6, about 803) no longer fits the room left under the 850 line. B4 was not launched.
+
+Likely causes, not yet separated: each reduction re-reads the observations, and E adds a median and three counts for each subset on top of A's. The group harmonization adds four class lookups per observation in every pass.
