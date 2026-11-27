@@ -141,6 +141,7 @@ budget:
   monthly_quota_eecu_h: 1000       # Earth Engine Contributor tier (switched 2026-11-26). The
                                    # project's "Monthly EECU-seconds" quota reads 3,600,000 s.
   stop_at_eecu_h: 850              # stop and ask if planned work would push the month past this
+  reserve_eecu_h: 30               # kept free for the stable-pixel mask and SPEI
 
 subset_sample:                     # revision 7 candidate: ETM+ only and OLI only on sampled chunks
   fraction: 0.18                   # share of chunks in each stratum

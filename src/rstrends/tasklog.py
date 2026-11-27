@@ -38,3 +38,21 @@ def read(path: str | Path, group: str | None = None) -> list[dict[str, str]]:
 
 def eecu_hours(seconds: float | None) -> float | None:
     return None if seconds is None else seconds / 3600.0
+
+
+def remaining_commitments(committed: dict, actual_by_group: dict[str, float]) -> dict[str, float]:
+    """Committed EECU-hours still to come, per label.
+
+    committed: label -> hours (an estimate not tied to tasks) or {"hours": h, "group": g}.
+    When an entry names a task-log group, the EECU those tasks already used is counted as
+    spent, so only the rest of the estimate stays committed (never below zero). This keeps
+    a running batch from being counted twice, once as spent and once as committed.
+    """
+    out = {}
+    for label, item in committed.items():
+        if isinstance(item, dict):
+            used = actual_by_group.get(item.get("group"), 0.0) if item.get("group") else 0.0
+            out[label] = max(0.0, float(item["hours"]) - used)
+        else:
+            out[label] = float(item)
+    return out

@@ -47,3 +47,12 @@ def test_subset_bands_and_batches():
         "S3": list(range(2010, 2015)),
         "S4": list(range(2015, 2020)),
     }
+
+
+def test_remaining_commitments_no_double_count():
+    from rstrends.tasklog import remaining_commitments
+
+    c = {"B4": {"hours": 168, "group": "B4"}, "old": 3.0, "B1": {"hours": 154, "group": "B1"}}
+    left = remaining_commitments(c, {"B4": 150.0})
+    assert left == {"B4": 18.0, "old": 3.0, "B1": 154.0}
+    assert remaining_commitments(c, {"B4": 200.0})["B4"] == 0.0
