@@ -30,6 +30,26 @@ Revision history: revision 3 approved 2026-11-25. Revision 4 (2026-11-26) record
 | Compute plan (revision 7) | Measured so far: pilot 21.4, harmonization sample 58.7 (13 tasks), cost tests about 9, B4 main 2015-2019 156.9 EECU-hours (projection 168). Projection for the rest: B1 154, B2 162, B3 148, B5 151, B6 76, subsets S1-S4 105 (on the chunk sample), Roy et al. comparison about 60 (EVI2 only, 2000-2019, on the chunk sample). November: B4, B1, B2, S4. December: B3, B5, B6, S1-S3, the Roy comparison, plus 30 EECU-hours kept for the stable-pixel mask and SPEI. Each month stays under the 850 EECU-hour stop line. |
 | Index-consistent trend (revision 7, approved) | A pixel is an index-consistent trend when it is FDR-significant in EVI2 and agrees in sign with NIRv and kNDVI. The label says only that the result does not depend on the index: all three indices come from the same harmonized red and NIR bands, so agreement does not confirm the trend independently or rule out a sensor artifact. The robustness evidence is the subset checks, the observation-density checks, the leave-one-year-out check, the harmonization diagnostics, and the Roy et al. comparison. The sensor-subset checks (ETM+ only and OLI only sign agreement, and the 2013 step test for each class) are reported as sample statistics with intervals from a bootstrap over chunks, by land cover class. Mixed forest and emergent wetlands, the classes with the largest offsets left by the harmonization, are reported separately. |
 
+
+### December 2026 exports (approved 2026-11-27)
+
+Nothing runs before December 1, 00:00 Pacific time. Budget 1,000 EECU-hours, stop line 850, 30 held for the stable-pixel mask and SPEI. The full plan with the estimates is kept with the project reports, outside the repository.
+
+The single-sensor subsets and the Roy et al. comparison run as one Earth Engine task per sampled chunk, with the years as bands (253 tasks each). In November, masking a province-wide export to the chunks did not reduce cost, because Earth Engine computed the whole export region. A test then measured 0.013 EECU-hours for one chunk and 0.042 for four, so cost follows the area exported. Every chunk task uses the main composites' grid and transform, so chunk pixels line up with the main export.
+
+| Step | Work | Projected EECU-hours | Stop rule |
+|---|---|---|---|
+| 1 | One-chunk tests: Roy (20 years as bands) and subsets (17 years) | 0.26 and 0.10-0.17 | Roy over 0.31 or subsets over 0.20: stop. A memory error or a run over an hour: split each task into 2000-2009 and 2010-2019 |
+| 2 | Main composites B3, 2010-2014 | 148 | First finished year more than 20% over its projection: stop the batch and report |
+| 3 | Main composites B5, 2020-2024 | 151 | Same |
+| 4 | Main composites B6, 2025-2026 | 76 | Same |
+| 5 | Single-sensor subsets, 253 chunk tasks | about 26 (45 planned) | Mean of the first 10 finished tasks more than 20% over the step 1 test: stop |
+| 6 | Roy et al. comparison, 253 chunk tasks | about 66 (70 planned) | Same |
+| 7 | Stable-pixel mask | under 10 | Over 15: stop |
+| 8 | SPEI | under 1 | Over 3: stop |
+
+Planned total about 500 EECU-hours plus the 30 reserve. Steps 2-4 run together once step 1 passes. Steps 5 and 6 start after the main first-year checks pass. Every batch is verified after download, and nothing is deleted from Google Drive without approval.
+
 ---
 
 ## 0.1 Revision 3: approved decisions and additions
@@ -274,7 +294,7 @@ Offsets are mean EVI2 (OLI minus transformed ETM+) at the 2013-2017 sample point
 4. **Chain.** TM goes to ETM+ (by year) and then to OLI. Landsat 9 is treated as OLI (Gross et al. 2022).
 5. **Apply per observation.** A median of one band commutes with an increasing linear transform, so coefficients fitted on season medians apply directly to each observation before indices are computed.
 6. **Report.** The coefficients, their cluster-bootstrap confidence intervals, how far they differ from Roy et al. (2016) OLS and RMA, and the EVI2 offset each one removes, overall and by land cover class. Bias removal is the main criterion. If our coefficients are close to Roy's, that is useful confirmation. If not, that is itself a finding about Collection 2. Result: Roy et al. (2016) RMA coefficients leave a mean EVI2 offset of 0.025 of the 0.033 in our Collection 2 data, so the study uses its own fits.
-7. **Comparison run (revision 7).** The EVI2 trend is repeated with Roy et al. (2016) coefficients on the subset chunk sample (Section 0.0) and the difference in slopes is reported. Only 2000-2019 need new composites, because later years are OLI only and are not transformed.
+7. **Comparison run (revision 7).** The EVI2 trend is repeated with Roy et al. (2016) coefficients on the subset chunk sample (Section 0.0) and the difference in slopes is reported. Only the ETM+ to OLI step changes: it uses Roy's RMA line for each band, with no land cover groups. TM is still taken to ETM+ with the study's yearly fits, so the comparison isolates the ETM+ to OLI step. Only 2000-2019 need new composites, because later years are OLI only and are not transformed. The run uses the same observations as the main export, so it exports EVI2 only and reuses the main clear counts.
 
 **Why season medians and not same-day pairs.** Landsat 5 and 7, and Landsat 7 and 8, image the same path 8 days apart, so true same-day pairs exist only in narrow sidelap zones. Matching season medians fits our use exactly, because our composites are season medians. Different acquisition dates add noise to the fit but no systematic bias, given thousands of sample pixels.
 
