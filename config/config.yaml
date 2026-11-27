@@ -96,6 +96,11 @@ trend:
   hr_acf_alpha: 0.05               # significance level for lag autocorrelations in Hamed-Rao
   jackknife_indices: ["evi2"]      # leave-one-year-out check on EVI2 only
 
+flags:
+  flicker_min_switches: 2          # pixels switching harmonization group this often are flagged
+  count_corr_min_years: 10         # paired years needed for the EVI2 vs clear-count Spearman flag
+  # the Spearman flag uses trend.fdr_q (Benjamini-Hochberg across pixels)
+
 land_cover:
   stable_min_confidence: null      # set in Phase 3 after reading the Annual NLCD user guide
 
