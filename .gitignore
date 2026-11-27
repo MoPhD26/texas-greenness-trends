@@ -47,3 +47,6 @@ __pycache__/
 *.egg-info/
 dask-worker-space/
 *.log
+
+# Personal documents
+*.docx
