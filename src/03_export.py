@@ -6,10 +6,11 @@
   --status         show state, run time, and EECU-hours of every submitted task
 
 Each year is one export task, written as int16 plain GeoTIFF tiles (no overviews) on the Annual
-NLCD grid, computed in a single pass over the scenes. Bands (rstrends.batches.export_bands):
-evi2 (x storage_scale) and sub-season clear counts, plus etm_* bands for 2000-2019 and oli_*
-bands for 2013-2019 (the single-sensor subsets). The pilot (P) used the earlier
-seven-band design. Requires final harmonization coefficients.
+NLCD grid, with the pilot's computation plus outline and cloud filtering and the folded
+single-sensor subsets (gee.annual_composite_production). Bands (rstrends.batches.export_bands):
+evi2, nirv, kndvi (x storage_scale) and sub-season clear counts, plus etm_* bands for
+2000-2019 and oli_* bands for 2013-2019 (the single-sensor subsets). The pilot (P) used the
+earlier seven-band design. Requires final harmonization coefficients.
 
 Run:
   conda run -n rs-trends python src/03_export.py --batch P
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 
@@ -68,6 +70,14 @@ def main() -> None:
         harm = json.loads(harm_path.read_text(encoding="utf-8"))
         if harm.get("status") != "final":
             raise SystemExit("coefficients.json is not marked final")
+        want = cfg["harmonization"].get("final_coefficients", {})
+        got = hashlib.sha256(harm_path.read_bytes()).hexdigest()
+        if got != want.get("sha256") or harm.get("version") != want.get("version"):
+            raise SystemExit(
+                f"coefficients.json ({harm.get('version')}, {got[:12]}) does not match the "
+                f"config ({want.get('version')}, {str(want.get('sha256'))[:12]})"
+            )
+        gee.check_land_cover_years(cfg, batches[name])
         gpkg = root / "raw" / "boundary" / "province255.gpkg"
         fc = gee.province(gpkg)
         filt = gee.filter_geometry(gpkg, cfg["export"]["filter_buffer_m"])
@@ -75,7 +85,7 @@ def main() -> None:
         folder = f"{cfg['export']['drive_folder_prefix']}{name}"
         ids = []
         for year in batches[name]:
-            img = gee.annual_composite_single_pass(cfg, year, fc, filt, harm)
+            img = gee.annual_composite_production(cfg, year, fc, filt, harm)
             # Write masked pixels as nodata explicitly. The pilot showed that the noData format
             # option alone leaves masked pixels as 0, which is a valid EVI2 value.
             img = img.unmask(cfg["export"]["nodata"], False)

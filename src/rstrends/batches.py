@@ -34,14 +34,3 @@ def export_bands(cfg: dict, year: int) -> list[str]:
         if y0 <= year <= y1:
             bands += [f"{name}_evi2"] + [f"{name}_{SUB_SEASON_PREFIX}{s}" for s in seasons]
     return bands
-
-
-def sample_chunks(keys: list[str], fraction: float, seed: int) -> list[str]:
-    """Random sample of chunk keys for the NIRv and kNDVI checks, reproducible from the seed."""
-    import numpy as np
-
-    if not 0 < fraction <= 1:
-        raise ValueError("fraction must be in (0, 1]")
-    n = max(1, round(len(keys) * fraction))
-    rng = np.random.default_rng(seed)
-    return sorted(rng.choice(sorted(keys), size=n, replace=False).tolist())

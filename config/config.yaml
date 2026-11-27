@@ -53,7 +53,12 @@ harmonization:
   min_points_per_class: 300        # floor in the area-proportional stratified sample
   min_clear_obs_per_sensor: 10     # a point enters a fit only if both sensors have this many
   min_clear_obs_per_sensor_tm: 6   # TM to ETM+ years only (Landsat 7 scan gaps cut clear counts)
-  class_groups:                    # sensitivity check: ETM+ to OLI fitted per group
+  # Final coefficients (outputs/harmonization/coefficients.json). Exports refuse any other file.
+  # ETM+ to OLI per land cover group, TM to ETM+ per year, RMA. Approved 2026-11-27.
+  final_coefficients:
+    version: "harm-v1-2026-11-27"
+    sha256: "fc0ad388e957a281bcc39e32f6f5d2a0d7e6799a8d7c626cc88eb4cc16bbaac3"
+  class_groups:                    # ETM+ to OLI is fitted per group (revision 6, final)
     woody: [41, 42, 43, 52, 90]
     herbaceous: [71, 81, 82, 95]
     developed: [21, 22, 23, 24, 31]
@@ -118,16 +123,14 @@ export:
   nodata: -32768                   # all bands exported as int16, counts included
   file_dimensions: 32768           # max tile edge in pixels per output GeoTIFF
   filter_buffer_m: 1000            # scenes are filtered by the province outline plus this buffer
-  main_indices: ["evi2"]           # province-wide index bands. NIRv and kNDVI run on a sample.
+  main_indices: ["evi2", "nirv", "kndvi"]   # all three province wide (revision 6)
   # Single-sensor subsets, folded into the yearly tasks as extra bands (sensitivity check a)
   subsets:
     etm: {family: "ETM", years: [2000, 2019]}
     oli: {family: "OLI", years: [2013, 2019]}
 
 index_checks:
-  indices: ["nirv", "kndvi"]
-  sample_fraction: 0.10            # share of 512 x 512 chunks, drawn at random
-  seed: 2026
+  indices: ["nirv", "kndvi"]       # province wide, pixel level (revision 6 restores this)
 
 paths:
   data_dir: "C:/rsdata"            # overridden by the RS_DATA_DIR environment variable

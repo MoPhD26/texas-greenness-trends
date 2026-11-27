@@ -6,7 +6,9 @@ Exports the same tile and year four ways and records EECU-hours per variant:
   B  outline filter (buffered province polygon), scenes over the cloud limit skipped,
      single map over the scenes, 3 indices and 3 counts
   C  B with EVI2 only
-  D  C plus the single-sensor subset bands folded in (the proposed production design)
+  D  C plus the single-sensor subset bands folded in (the revision 4 production design)
+  E  revision 6 production design: A's computation (3 indices, one pass per count) with the
+     outline filter, the cloud skip, the folded subset bands, and the final group harmonization
 
 The tile straddles the province edge, so the outline filter's effect is included.
 
@@ -62,6 +64,7 @@ def main() -> None:
         metavar="TAG",
         help="submit the same four variants again with this tag in their names (for a clean rerun)",
     )
+    ap.add_argument("--variants", default="ABCD", help="variants to submit, for example E")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -106,16 +109,21 @@ def main() -> None:
         fc = gee.province(gpkg)
         filt = gee.filter_geometry(gpkg, cfg["export"]["filter_buffer_m"])
         three = ["evi2", "nirv", "kndvi"]
-        variants = {
-            "A": gee.annual_composite(cfg, YEAR, fc, harm),
-            "B": gee.annual_composite_single_pass(
+        final = json.loads(
+            (root / "outputs" / "harmonization" / "coefficients.json").read_text(encoding="utf-8")
+        )
+        builders = {
+            "A": lambda: gee.annual_composite(cfg, YEAR, fc, harm),
+            "B": lambda: gee.annual_composite_single_pass(
                 cfg, YEAR, fc, filt, harm, indices=three, subsets=False
             ),
-            "C": gee.annual_composite_single_pass(
+            "C": lambda: gee.annual_composite_single_pass(
                 cfg, YEAR, fc, filt, harm, indices=["evi2"], subsets=False
             ),
-            "D": gee.annual_composite_single_pass(cfg, YEAR, fc, filt, harm),
+            "D": lambda: gee.annual_composite_single_pass(cfg, YEAR, fc, filt, harm),
+            "E": lambda: gee.annual_composite_production(cfg, YEAR, fc, filt, final),
         }
+        variants = {k: builders[k]() for k in args.variants}
         meta = {"year": YEAR, "tile_px": TILE_PX, "upper_left": [ulx, uly], "fraction": frac}
         (root / "logs" / "cost_test.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         print(f"     tile {TILE_PX} px at {ulx:.0f}, {uly:.0f}, {frac:.0%} inside the province")

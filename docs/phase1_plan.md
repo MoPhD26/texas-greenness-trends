@@ -1,8 +1,8 @@
-# Phase 1: Literature Review and Study Plan (revision 5)
+# Phase 1: Literature Review and Study Plan (revision 6)
 
 Texas greenness trends, Bailey's Prairie Parkland (Subtropical) Province 255, 2000-2026
 
-Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Revision 5 (2026-11-26, later the same day) changes the harmonization sample design and fit (Section 0.0, last rows). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
+Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Revision 5 (2026-11-26, later the same day) changes the harmonization sample design and fit. Revision 6 (2026-11-27) finalizes the harmonization and the production export design (Section 0.0, last rows). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
 
 ---
 
@@ -13,14 +13,17 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Study area | The 2007 delineation of Province 255 from the USDA Forest Service ECOMAP Ecological Provinces data (Cleland et al. 2007). The 2025 ECOMAP release revised the hierarchy and no longer has a Province 255. Its area now falls mostly in Province 352 Cross Timbers and Province 353 Texas Gulf. We use the 2007 delineation because it is the only source that defines Province 255, the unit this study and its 2016 predecessor are framed around. Measured area: 246,477 km2, about 274 million 30 m pixels (revision 3 said 207,500 km2 and 231 million). |
 | Grid | The Annual NLCD Collection 1 grid: Albers Equal Area on the WGS84 datum, 30 m, read from the Annual NLCD land cover images so every pixel aligns with the land cover data. This is not EPSG:5070, which uses the NAD83 datum. The two differ by about 1 m here. Area statistics stay equal-area. |
 | Period | 2000-2026. The 2026 season is complete in the archive (Section 7 decision rule). |
-| Export design | One task per year, computed in a single pass over the scenes. Scenes are filtered by the province outline (1 km buffer) instead of its bounding box, and scenes with more than 90% land cloud cover are skipped. Province-wide bands: EVI2 and the three sub-season clear counts. The ETM+ only (2000-2019) and OLI only (2013-2019) subsets are folded into the same yearly tasks as extra bands, so each scene is read once. The all-acquisitions count is computed at 300 m for the quality report. |
-| Index checks | NIRv and kNDVI run on a 10% random sample of 512 x 512 chunks, not province wide. Index agreement is reported as sample statistics with confidence intervals. |
-| Robust trend | A pixel is a robust trend when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
+| Export design (superseded by revision 6, below) | One task per year, computed in a single pass over the scenes. Scenes are filtered by the province outline (1 km buffer) instead of its bounding box, and scenes with more than 90% land cloud cover are skipped. Province-wide bands: EVI2 and the three sub-season clear counts. The ETM+ only (2000-2019) and OLI only (2013-2019) subsets are folded into the same yearly tasks as extra bands, so each scene is read once. The all-acquisitions count is computed at 300 m for the quality report. |
+| Index checks (superseded by revision 6, below) | NIRv and kNDVI run on a 10% random sample of 512 x 512 chunks, not province wide. Index agreement is reported as sample statistics with confidence intervals. |
+| Robust trend (superseded by revision 6, below) | A pixel is a robust trend when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
 | Endpoint check | Leave-one-year-out runs only on pixels that are FDR-significant in the EVI2 core run. |
 | Harmonization | Sensor medians for each fit use the dates both sensors cover (for example, 2013 starts April 11 for both Landsat 7 and Landsat 8). Coefficients stay in draft until reviewed. Revision 5 replaces the sample design (below). |
 | Earth Engine tier | Contributor tier (1,000 EECU-hours per month) since 2026-11-26. Every report carries a budget line: spent this month, committed, remaining. For each month, stop and ask if planned work would push past 850. No full exports until the harmonization results and the cost check are reviewed together. |
 | Harmonization sample (revision 5) | About 10,000 stable Annual NLCD pixels in 200 random grid-aligned boxes of 64 x 64 pixels (1.92 km), drawn as Earth Engine batch tasks only. Points in a box share the Landsat tiles Earth Engine reads, which makes the sample far cheaper than scattered points. The interactive sample of scattered points used about 30 EECU-hours per year and pushed the project past its monthly quota. |
 | Harmonization fit (revision 5) | ETM+ to OLI: one fit on per-point medians over all 2013-2017 dates both sensors cover, not per season. TM to ETM+: one fit per year 2000-2011, for the Landsat 5 drift. A point enters the ETM+ to OLI fit only with at least 10 clear observations per sensor, and a TM to ETM+ fit with at least 6. RMA is primary (comparable with Roy et al. 2016). Deming regression is a check, with the error variance ratio estimated from each point's sampling variance of the median. Confidence intervals come from a cluster bootstrap that resamples boxes. Fit statistics and the EVI2 offset each transform removes are reported overall and by land cover class. Bias removal is the main criterion, not correlation. |
+| Harmonization final (revision 6) | ETM+ to OLI: one RMA line per land cover group (woody 41, 42, 43, 52, 90. Herbaceous 71, 81, 82, 95. Developed and barren 21-24, 31), chosen because the single fit's leftover class offsets would create false trends near or above the detectable trend in several classes (Section 3). TM to ETM+: yearly RMA, at least 6 clear observations per sensor. Version harm-v1-2026-11-27 with a SHA-256 checksum in the config. |
+| Export design (revision 6) | One task per year with the pilot's computation (median of EVI2, NIRv, kNDVI, and one pass per sub-season count), plus the province outline filter, the 90% cloud skip, and the ETM+ only and OLI only bands folded in. The revision 4 single-pass design and dropping NIRv and kNDVI saved nothing in the cost test. |
+| Index checks and robust trend (revision 6) | NIRv and kNDVI run province wide again, and the original pixel-level robust trend definition is restored: FDR-significant in EVI2, same sign in the applicable subset, same sign in NIRv and kNDVI. |
 
 ---
 
@@ -238,7 +241,28 @@ The 40 numbered science papers include 37 core papers plus 3 kept only for frami
 **Recommended procedure.**
 1. **Bands.** Only red and NIR need harmonizing, because all three indices (EVI2, NIRv, kNDVI) use only those two bands. This is a real advantage of dropping the blue band.
 2. **ETM+ to OLI.** Fit using the 2013-2017 seasons, when both satellites flew and Landsat 7 was still in its maintained orbit (last maneuver August 2017). For a stratified sample of about 10,000 stable Annual NLCD pixels in 200 random boxes (revision 5), compute one Landsat 7 and one Landsat 8 median red and NIR per pixel over all March-October dates in 2013-2017 that both sensors cover. Pooling the five years gives each median many clear dates, which cuts the scatter that single-season medians showed. Pixels need at least 10 clear observations from each sensor. Fit reduced major axis regression per band. RMA is used because both sensors have measurement error, and OLS would bias the slope toward zero (Roy et al. 2016 report both). Deming regression with an error variance ratio estimated from the data is a check.
-**Land cover groups for ETM+ to OLI (revision 5, recommended, awaiting approval).** One ETM+ to OLI line per band removes the overall EVI2 offset (0.0328 to -0.0001) but leaves offsets that depend on land cover: mixed forest -0.019, developed high intensity -0.013, woody wetlands -0.012, cropland +0.010, grassland +0.009. A residual offset only affects the years before Landsat 8, so it acts as a step at 2013. Measured on real 27-year EVI2 series, a step of size d changes the 2000-2026 Theil-Sen slope by 0.055 d per year. We compared that false trend with each class's median minimum detectable trend (Weatherhead et al. 1998, 90% detection probability at the 5% level), estimated from the one-chunk benchmark, with a quick estimate from Landsat 7 yearly medians at the harmonization points for the two classes the chunk lacks. With the single fit, the false trend exceeds the detectable trend for developed high intensity (2.4 times) and mixed forest (1.2 times), and is half or more of it in four other classes. Class summaries average many pixels, so they would pick up even smaller biases than a single pixel test. One line per land cover group (woody: 41, 42, 43, 52, 90. Herbaceous: 71, 81, 82, 95. Developed and barren: 21-24, 31) brings every class to at most 0.76 times its detectable trend, and 11 of 14 classes below 0.45. Each pixel takes its group's line from its Annual NLCD class in that year. Classes outside the groups (open water) keep the single fit. The OLI only subset check then tests for any remaining step at 2013.
+**Land cover groups for ETM+ to OLI (revision 6, approved 2026-11-27).** One ETM+ to OLI line per band removes the overall EVI2 offset (0.0328 to -0.0001) but leaves offsets that depend on land cover: mixed forest -0.019, developed high intensity -0.013, woody wetlands -0.012, cropland +0.010, grassland +0.009. A residual offset only affects the years before Landsat 8, so it acts as a step at 2013. Measured on real 27-year EVI2 series, a step of size d changes the 2000-2026 Theil-Sen slope by 0.055 d per year. We compared that false trend with each class's median minimum detectable trend (Weatherhead et al. 1998, 90% detection probability at the 5% level), estimated from the one-chunk benchmark, with a quick estimate from Landsat 7 yearly medians at the harmonization points for the two classes the chunk lacks. With the single fit, the false trend exceeds the detectable trend for developed high intensity (2.4 times) and mixed forest (1.2 times), and is half or more of it in four other classes. Class summaries average many pixels, so they would pick up even smaller biases than a single pixel test. One line per land cover group (woody: 41, 42, 43, 52, 90. Herbaceous: 71, 81, 82, 95. Developed and barren: 21-24, 31) brings every class to at most 0.76 times its detectable trend, and 11 of 14 classes below 0.45. Each pixel takes its group's line from its Annual NLCD class in that year. Classes outside the groups (open water) keep the single fit. The OLI only subset check then tests for any remaining step at 2013.
+
+| Class | Offset, single fit (95% CI) | False trend / detectable, single | Offset, group fit (95% CI) | False trend / detectable, group |
+|---|---|---|---|---|
+| 21 developed open | -0.002 (-0.005 to 0.001) | 0.09 | -0.003 (-0.007 to 0.001) | 0.17 |
+| 22 developed low | -0.002 (-0.006 to 0.001) | 0.15 | -0.001 (-0.004 to 0.002) | 0.06 |
+| 23 developed medium | -0.008 (-0.013 to -0.003) | 0.75 | -0.001 (-0.005 to 0.003) | 0.09 |
+| 24 developed high | -0.013 (-0.017 to -0.010) | 2.37 | 0.000 (-0.004 to 0.004) | 0.02 |
+| 31 barren | -0.004 (-0.008 to 0.002) | 0.36 | 0.006 (0.001 to 0.010) | 0.59 |
+| 41 deciduous forest | -0.005 (-0.010 to 0.000) | 0.27 | 0.002 (-0.001 to 0.006) | 0.13 |
+| 42 evergreen forest | -0.003 (-0.011 to 0.006) | 0.21 | 0.001 (-0.005 to 0.007) | 0.04 |
+| 43 mixed forest | -0.019 (-0.026 to -0.013) | 1.19 | -0.010 (-0.017 to -0.005) | 0.66 |
+| 52 shrub (quick estimate) | 0.007 (0.002 to 0.012) | 0.54 | 0.005 (0.001 to 0.010) | 0.41 |
+| 71 grassland | 0.009 (0.006 to 0.012) | 0.48 | 0.005 (0.003 to 0.008) | 0.30 |
+| 81 pasture and hay | -0.003 (-0.006 to -0.001) | 0.14 | -0.005 (-0.008 to -0.003) | 0.24 |
+| 82 cropland | 0.010 (0.005 to 0.016) | 0.38 | 0.006 (0.001 to 0.011) | 0.21 |
+| 90 woody wetlands | -0.012 (-0.019 to -0.006) | 0.65 | -0.003 (-0.008 to 0.002) | 0.17 |
+| 95 emergent wetlands (quick estimate) | -0.011 (-0.017 to 0.007) | 0.56 | -0.015 (-0.021 to 0.003) | 0.76 |
+
+Offsets are mean EVI2 (OLI minus transformed ETM+) at the 2013-2017 sample points, with cluster-bootstrap intervals (1,000 resamples of the 200 boxes). Detectable trends are medians per class from the one-chunk benchmark (Weatherhead et al. 1998), or from Landsat 7 yearly medians at the sample points where the chunk has too few pixels of the class. Mixed forest and emergent wetlands keep the largest offsets after the group fits, so they are the classes the OLI only subset check watches most closely.
+
+**Final coefficients.** Version harm-v1-2026-11-27, stored in `outputs/harmonization/coefficients.json` with its SHA-256 in the config. The export script refuses any other file. Each pixel takes its group's ETM+ to OLI line from its Annual NLCD class in that year (2026 uses 2025, the latest Annual NLCD year). A pixel with no class in Annual NLCD, or a class outside the groups (open water, perennial snow), takes the single fit. The export script checks that every year in a batch has an Annual NLCD year at or before it. In practice the lookup only matters for TM and ETM+ observations (2000-2019), because OLI is the reference and is not transformed.
 3. **TM to ETM+, year by year.** For each year 2000-2011, fit the same way using Landsat 5 and Landsat 7 medians from that year (same points). Revision 5: points need at least 6 clear observations from each sensor in that year. A minimum of 10 kept only 6-49% of points, because Landsat 7 scan line gaps cut clear counts after 2003. With 6, each year keeps 36-85% of points in 118-192 boxes. Landsat 7 held its orbit during those years, so year-specific coefficients absorb the Landsat 5 drift that Zhang and Roy (2016) and Roy et al. (2020) documented, including its fast 2003-2007 change. As a check, slope and level were also modelled as smooth functions of time. The raw TM to ETM+ EVI2 offsets differ from zero in 8 of 12 years but change sign between neighbouring years, so a smooth curve does not remove them and the yearly fits do.
 4. **Chain.** TM goes to ETM+ (by year) and then to OLI. Landsat 9 is treated as OLI (Gross et al. 2022).
 5. **Apply per observation.** A median of one band commutes with an increasing linear transform, so coefficients fitted on season medians apply directly to each observation before indices are computed.
@@ -324,9 +348,9 @@ The rules are applied in that order. The data quality report gives the number an
 
 **(b) Observation density.** Spearman correlation between each pixel's EVI2 slope and the Theil-Sen slope of its clear-observation count, overall and by class. A strong correlation would mean the trend tracks changing data density rather than vegetation.
 
-**(c) Index agreement.** Repeat RQ1 with NIRv and kNDVI on a 10% random sample of 512 x 512 chunks (revision 4). Report sign agreement among significant pixels and correlation of standardized slopes (slope divided by each pixel's interannual standard deviation, since the indices have different units) as sample statistics with bootstrap confidence intervals, resampling chunks.
+**(c) Index agreement.** Repeat RQ1 with NIRv and kNDVI over the whole province (revision 6 restores this after the revision 4 sample design). Report sign agreement among significant pixels and correlation of standardized slopes (slope divided by each pixel's interannual standard deviation, since the indices have different units).
 
-A pixel is called a **robust trend** when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset from (a): ETM+ only for 2000-2019 and OLI only for 2013-2026. Index agreement from (c) is reported separately as a sample statistic, not as part of the definition (revision 4).
+A pixel is called a **robust trend** when it is FDR-significant in EVI2, keeps its sign in the applicable subset from (a), and agrees in sign with NIRv and kNDVI (the original definition, restored in revision 6).
 
 ### 5.7 Non-monotonic trends: how the paper handles them
 A 27-year record that contains the 2011 drought, the recovery after it, and the 2022 drought is unlikely to be monotonic everywhere. Theil-Sen and Mann-Kendall estimate the net monotonic tendency, and a pixel that browned then greened can show no trend at all (de Jong et al. 2012). The paper handles this in four ways without a new research question:
@@ -423,19 +447,23 @@ All of it lives under `C:\rsdata` (Section 8.6), never in the repo.
 ### 8.4 Local run time (estimates, to be benchmarked)
 These are estimates from operation counts, not measurements. The environment does not exist yet, so I could not benchmark. In Phase 3, before any full run, I will time one chunk and update these numbers.
 
-| Step | Estimate with 4 workers |
+Revision 6: measured on one 512 x 512 chunk in Phase 3 (4 workers, one BLAS thread each, 0.268 chunks per second, 1,318 chunks).
+
+| Step | Measured or scaled from the benchmark |
 |---|---|
-| Core trend suite (Theil-Sen, Mann-Kendall, Hamed-Rao, FDR) per index over the full province | 0.5-1.5 hours |
-| Leave-one-year-out endpoint check, EVI2 only (27 refits) | 3-6 hours |
-| NIRv, kNDVI, two subsets, Roy comparison | 2-5 hours total |
-| RESTREND and drought correlations | 1-2 hours |
-| **Total local compute** | **about 7-15 hours**, split across overnight runs |
+| Core trend suite (Theil-Sen, Mann-Kendall, Hamed-Rao), EVI2, full province | 1.4 hours (measured rate) |
+| The same for NIRv and kNDVI, full province (revision 6) | 2.7 hours |
+| ETM+ only (20 years) and OLI only (7 years) subsets, EVI2 | about 1 hour (pairwise work scales with years squared) |
+| Benjamini-Hochberg, per index | about 1 minute |
+| Leave-one-year-out, EVI2-significant pixels only | about 3.2 hours |
+| RESTREND and drought correlations | 1-2 hours (estimate) |
+| **Total local compute** | **about 10-11 hours**, split across two overnight runs |
 
 The trend math is written as vectorized NumPy and unit tested against pyMannKendall on small arrays. Looping pyMannKendall over 274 million pixels would take days.
 
 ### 8.5 Batch export procedure (Google Drive, about 5 years per batch)
 
-Revision 5: measured from the pilot, the full main stack is about 76 GB as plain GeoTIFF (the exports no longer write Cloud Optimized overviews, which added 35%). Batches range from about 3 GB (B6) to 21 GB (B4). Drive now has 400 GB, so all batches fit at once. Several batches may run in parallel within the month's EECU quota, and earlier batches are downloaded while later ones run. Each batch is still verified before anything is deleted from Drive.
+Revision 6: measured from the pilot (1.28 compressed bytes per band per province pixel), the full main stack is about 95 GB as plain GeoTIFF: 270 band-years, with EVI2, NIRv, kNDVI, and three counts every year, plus four ETM+ only bands for 2000-2019 and four OLI only bands for 2013-2019. Batches: B1 17.5 GB, B2 17.5 GB, B3 20.3 GB, B4 24.6 GB, B5 10.5 GB, B6 4.2 GB. The exports no longer write Cloud Optimized overviews, which added 35%. Drive now has 400 GB, so all batches fit at once. Several batches may run in parallel within the month's EECU quota, and earlier batches are downloaded while later ones run. Each batch is still verified before anything is deleted from Drive.
 
 | Batch | Content |
 |---|---|

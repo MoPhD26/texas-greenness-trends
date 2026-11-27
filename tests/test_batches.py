@@ -24,18 +24,9 @@ def test_export_bands_by_year():
     from rstrends.batches import export_bands
 
     cfg = load_config()
-    base = ["evi2", "n_spring", "n_summer", "n_fall"]
+    base = ["evi2", "nirv", "kndvi", "n_spring", "n_summer", "n_fall"]
     etm = ["etm_evi2", "etm_n_spring", "etm_n_summer", "etm_n_fall"]
     oli = ["oli_evi2", "oli_n_spring", "oli_n_summer", "oli_n_fall"]
     assert export_bands(cfg, 2005) == base + etm
     assert export_bands(cfg, 2015) == base + etm + oli
     assert export_bands(cfg, 2022) == base
-
-
-def test_sample_chunks_reproducible():
-    from rstrends.batches import sample_chunks
-
-    keys = [f"k{i}" for i in range(1318)]
-    a = sample_chunks(keys, 0.10, 1)
-    assert a == sample_chunks(list(reversed(keys)), 0.10, 1)
-    assert len(a) == 132 and len(set(a)) == 132

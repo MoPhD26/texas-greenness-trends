@@ -31,6 +31,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 
@@ -91,6 +92,7 @@ def main() -> None:
         choices=["single", "group"],
         help="with --finalize: one ETM+ to OLI line, or one per land cover group",
     )
+    ap.add_argument("--tag", help="with --finalize: version tag stored in the coefficients")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -227,13 +229,17 @@ def main() -> None:
 
     if args.finalize:
         draft = json.loads((out_dir / "coefficients_draft.json").read_text(encoding="utf-8"))
-        if args.mode is None:
-            raise SystemExit("--finalize needs --mode single or --mode group")
+        if args.mode is None or not args.tag:
+            raise SystemExit("--finalize needs --mode single|group and --tag")
         draft["etm_to_oli_mode"] = args.mode
+        draft["version"] = args.tag
         draft["status"] = "final"
         draft["finalized_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        (out_dir / "coefficients.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
-        print(f"ok   finalized {out_dir / 'coefficients.json'}")
+        final = out_dir / "coefficients.json"
+        final.write_text(json.dumps(draft, indent=2), encoding="utf-8")
+        digest = hashlib.sha256(final.read_bytes()).hexdigest()
+        print(f"ok   finalized {final} version {args.tag} sha256 {digest}")
+        print("     put the version and sha256 in config harmonization.final_coefficients")
 
 
 def fit(cfg: dict, root, out_dir, jobs) -> None:

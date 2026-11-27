@@ -132,6 +132,21 @@ def land_cover_year(cfg: dict, year: int) -> ee.Image:
     return ee.Image(ic.first()).select([0]).rename("lc")
 
 
+def check_land_cover_years(cfg: dict, years) -> dict[int, int]:
+    """Annual NLCD year used for each requested year. Fails if a year has no class image."""
+    have = sorted(
+        int(y)
+        for y in ee.ImageCollection(cfg["land_cover_collection"]).aggregate_array("year").getInfo()
+    )
+    used = {}
+    for y in years:
+        prior = [h for h in have if h <= y]
+        if not prior:
+            raise ValueError(f"no Annual NLCD year at or before {y}")
+        used[y] = prior[-1]
+    return used
+
+
 def to_oli_coefficients(harm: dict | None, family: str, year: int, cfg: dict | None = None):
     """Per-band (slope, intercept) taking a family's reflectance to OLI-equivalent.
 
@@ -148,7 +163,8 @@ def to_oli_coefficients(harm: dict | None, family: str, year: int, cfg: dict | N
         return table["default"]
     if cfg is None:
         raise ValueError("group coefficients need cfg for the land cover collection")
-    lc = land_cover_year(cfg, year)
+    # Pixels without a class (masked in Annual NLCD) take the single fit, via remap's default.
+    lc = land_cover_year(cfg, year).unmask(0)
     classes = sorted(table["classes"])
     out = {}
     for b in ("red", "nir"):
@@ -234,6 +250,68 @@ def annual_composite(cfg: dict, year: int, fc: ee.FeatureCollection, harm: dict 
     n_acq = obs.select("acq").sum().unmask(0).toInt16().rename("n_acq")
     out = med.rename(INDEX_BANDS).addBands(counts).addBands(n_acq)
     return out.updateMask(province_mask(fc)).set("year", year)
+
+
+def annual_composite_production(
+    cfg: dict,
+    year: int,
+    fc: ee.FeatureCollection,
+    filt: ee.Geometry,
+    harm: dict | None,
+    max_cloud: float | None = None,
+) -> ee.Image:
+    """One year's main export (revision 6 production design).
+
+    The computation of the pilot design: median of EVI2, NIRv, and kNDVI over all harmonized
+    clear observations, and one count per sub-season. Scenes are filtered by the buffered
+    province outline and by land cloud cover. The single-sensor subset bands (EVI2 median and
+    sub-season counts from one sensor family only) are computed the same way and folded in.
+    Band order matches rstrends.batches.export_bands.
+    """
+    from rstrends.batches import export_bands
+
+    if max_cloud is None:
+        max_cloud = cfg["qa"]["max_scene_cloud_cover_land"]
+    scale = cfg["indices"]["storage_scale"]
+    by_family: dict[str, ee.ImageCollection] = {}
+    for key in sensor_keys(cfg):
+        win = sensor_window(cfg, key, year)
+        if win is None:
+            continue
+        fam = cfg["sensors"][key]["family"]
+        col = ee.ImageCollection(cfg["sensors"][key]["collection"]).filterBounds(filt)
+        col = col.filterDate(win[0], win[1])
+        if max_cloud is not None:
+            col = col.filter(ee.Filter.lte("CLOUD_COVER_LAND", max_cloud))
+        col = col.map(lambda im, fam=fam: prep(im, fam, cfg))
+        coeffs = to_oli_coefficients(harm, fam, year, cfg)
+        if coeffs is not None:
+            col = col.map(lambda im, c=coeffs: apply_linear(im, c))
+        col = col.map(add_indices)
+        by_family[fam] = by_family[fam].merge(col) if fam in by_family else col
+    if not by_family:
+        raise ValueError(f"no sensors cover the {year} season")
+    fams = list(by_family)
+    obs = by_family[fams[0]]
+    for f in fams[1:]:
+        obs = obs.merge(by_family[f])
+
+    def stack(o: ee.ImageCollection, idx: list[str], prefix: str) -> ee.Image:
+        names = [f"{prefix}{b}" for b in idx]
+        out = o.select(idx).median().rename(names).multiply(scale).round().toInt16()
+        for name, (a, b) in cfg["season"]["sub_seasons"].items():
+            end = _date(f"{year}-{b}") + dt.timedelta(days=1)
+            n = o.filterDate(f"{year}-{a}", end.isoformat()).select("evi2").count()
+            out = out.addBands(n.unmask(0).toInt16().rename(f"{prefix}n_{name}"))
+        return out
+
+    out = stack(obs, list(cfg["export"]["main_indices"]), "")
+    for name, sub in cfg["export"]["subsets"].items():
+        if sub["years"][0] <= year <= sub["years"][1]:
+            if sub["family"] not in by_family:
+                raise ValueError(f"subset {name} has no {sub['family']} data in {year}")
+            out = out.addBands(stack(by_family[sub["family"]], ["evi2"], f"{name}_"))
+    return out.select(export_bands(cfg, year)).updateMask(province_mask(fc)).set("year", year)
 
 
 def filter_geometry(gpkg_path, buffer_m: float) -> ee.Geometry:
