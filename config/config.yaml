@@ -1,6 +1,7 @@
 # Study configuration. Every threshold, year, and path used by the pipeline lives here.
 # Secrets never go in this file. The Earth Engine project ID comes from the EE_PROJECT
 # environment variable. The data folder comes from RS_DATA_DIR, falling back to paths.data_dir.
+# All dates in version tags, task logs, and reports are UTC (for example harm-v1-2026-11-27).
 
 study_area:
   name: "Prairie Parkland (Subtropical) Province 255"

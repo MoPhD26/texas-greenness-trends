@@ -1,8 +1,10 @@
-# Phase 1: Literature Review and Study Plan (revision 7, proposed)
+# Phase 1: Literature Review and Study Plan (revision 7)
 
 Texas greenness trends, Bailey's Prairie Parkland (Subtropical) Province 255, 2000-2026
 
-Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records the decisions made after the Phase 3 pilot (Section 0.0). Revision 5 (2026-11-26, later the same day) changes the harmonization sample design and fit. Revision 6 (2026-11-27) finalizes the harmonization and the production export design. Revision 7 (2026-11-27, proposed, awaiting approval) moves the single-sensor subsets to a chunk sample to fit the compute budget (Section 0.0, last rows). Details and measurements are in [phase3_pilot_report.md](phase3_pilot_report.md).
+> **Status (2026-11-27 UTC).** Phase 3 data production is under way. Revision 7 of this plan is approved and current. Section 0.0 records every change made after the Phase 3 pilot, with measured numbers, and takes precedence over older estimates further down (for example the compute estimates in Section 8, written before the pilot). Results are in progress. All dates in this plan, in version tags, and in reports are UTC.
+
+Revision history: revision 3 approved 2026-11-25. Revision 4 (2026-11-26) records the decisions after the Phase 3 pilot. Revision 5 (2026-11-26) changes the harmonization sample design and fit. Revision 6 (2026-11-27) finalizes the harmonization and the production export design. Revision 7 (2026-11-27, approved) moves the single-sensor subsets to a chunk sample to fit the compute budget and renames the pixel label to index-consistent trend. The running Phase 3 reports with all measurements are kept with the data, outside the repository.
 
 ---
 
@@ -15,7 +17,7 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Period | 2000-2026. The 2026 season is complete in the archive (Section 7 decision rule). |
 | Export design (superseded by revision 6, below) | One task per year, computed in a single pass over the scenes. Scenes are filtered by the province outline (1 km buffer) instead of its bounding box, and scenes with more than 90% land cloud cover are skipped. Province-wide bands: EVI2 and the three sub-season clear counts. The ETM+ only (2000-2019) and OLI only (2013-2019) subsets are folded into the same yearly tasks as extra bands, so each scene is read once. The all-acquisitions count is computed at 300 m for the quality report. |
 | Index checks (superseded by revision 6, below) | NIRv and kNDVI run on a 10% random sample of 512 x 512 chunks, not province wide. Index agreement is reported as sample statistics with confidence intervals. |
-| Robust trend (superseded by revision 6, below) | A pixel is a robust trend when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
+| Pixel trend label (superseded by revision 6, below) | A pixel is labeled a trend (the label was then called "robust trend", renamed index-consistent trend in revision 7) when it is FDR-significant in EVI2 and keeps its sign in the applicable single-sensor subset (Section 5.6). Index agreement no longer enters the definition, because it is measured on a sample only. |
 | Endpoint check | Leave-one-year-out runs only on pixels that are FDR-significant in the EVI2 core run. |
 | Harmonization | Sensor medians for each fit use the dates both sensors cover (for example, 2013 starts April 11 for both Landsat 7 and Landsat 8). Coefficients stay in draft until reviewed. Revision 5 replaces the sample design (below). |
 | Earth Engine tier | Contributor tier (1,000 EECU-hours per month) since 2026-11-26. Every report carries a budget line: spent this month, committed, remaining. For each month, stop and ask if planned work would push past 850. No full exports until the harmonization results and the cost check are reviewed together. |
@@ -23,9 +25,10 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Harmonization fit (revision 5) | ETM+ to OLI: one fit on per-point medians over all 2013-2017 dates both sensors cover, not per season. TM to ETM+: one fit per year 2000-2011, for the Landsat 5 drift. A point enters the ETM+ to OLI fit only with at least 10 clear observations per sensor, and a TM to ETM+ fit with at least 6. RMA is primary (comparable with Roy et al. 2016). Deming regression is a check, with the error variance ratio estimated from each point's sampling variance of the median. Confidence intervals come from a cluster bootstrap that resamples boxes. Fit statistics and the EVI2 offset each transform removes are reported overall and by land cover class. Bias removal is the main criterion, not correlation. |
 | Harmonization final (revision 6) | ETM+ to OLI: one RMA line per land cover group (woody 41, 42, 43, 52, 90. Herbaceous 71, 81, 82, 95. Developed and barren 21-24, 31), chosen because the single fit's leftover class offsets would create false trends near or above the detectable trend in several classes (Section 3). TM to ETM+: yearly RMA, at least 6 clear observations per sensor. Version harm-v1-2026-11-27 with a SHA-256 checksum in the config. |
 | Export design (revision 6) | One task per year with the pilot's computation (median of EVI2, NIRv, kNDVI, and one pass per sub-season count), plus the province outline filter, the 90% cloud skip, and the ETM+ only and OLI only bands folded in. The revision 4 single-pass design and dropping NIRv and kNDVI saved nothing in the cost test. |
-| Index checks and robust trend (revision 6, robust trend replaced by revision 7 if approved) | NIRv and kNDVI run province wide again, and the original pixel-level robust trend definition is restored: FDR-significant in EVI2, same sign in the applicable subset, same sign in NIRv and kNDVI. |
-| Subsets on a chunk sample (revision 7, proposed) | The ETM+ only (2000-2019) and OLI only (2013-2019) subsets run on a stratified random sample of 253 whole 512 x 512 chunks (18.9% of province pixels). Chunks are stratified by their dominant Annual NLCD 2013 class, every class with at least 1% of the province is its own stratum with at least 5 chunks, and the sample matches the province class shares within about 1 percentage point (mixed forest 2.9% of the sample against 2.2% of the province, cropland 10.5% against 11.8%). Reason: the folded subset bands were 56% of the tile cost, and the province-wide design would not fit November and December. EVI2, NIRv, and kNDVI stay province wide. |
-| Robust trend (revision 7, proposed) | A pixel is a robust trend when it is FDR-significant in EVI2 and agrees in sign with NIRv and kNDVI. The sensor-subset checks (ETM+ only and OLI only sign agreement, and the 2013 step test for each class) are reported as sample statistics with intervals from a bootstrap over chunks, by land cover class. Mixed forest and emergent wetlands, the classes with the largest offsets left by the harmonization, are reported separately. |
+| Index checks and pixel trend label (revision 6, the label replaced by revision 7) | NIRv and kNDVI run province wide again, and the original pixel-level trend label is restored: FDR-significant in EVI2, same sign in the applicable subset, same sign in NIRv and kNDVI. |
+| Subsets on a chunk sample (revision 7, approved) | The ETM+ only (2000-2019) and OLI only (2013-2019) subsets run on a stratified random sample of 253 whole 512 x 512 chunks (18.9% of province pixels). Chunks are stratified by their dominant Annual NLCD 2013 class, every class with at least 1% of the province is its own stratum with at least 5 chunks, and the sample matches the province class shares within about 1 percentage point (mixed forest 2.9% of the sample against 2.2% of the province, cropland 10.5% against 11.8%). Reason: the folded subset bands were 56% of the tile cost, and the province-wide design would not fit November and December. EVI2, NIRv, and kNDVI stay province wide. |
+| Compute plan (revision 7) | Measured so far: pilot 21.4, harmonization sample 58.7 (13 tasks), cost tests about 9, B4 main 2015-2019 156.9 EECU-hours (projection 168). Projection for the rest: B1 154, B2 162, B3 148, B5 151, B6 76, subsets S1-S4 105 (on the chunk sample), Roy et al. comparison about 60 (EVI2 only, 2000-2019, on the chunk sample). November: B4, B1, B2, S4. December: B3, B5, B6, S1-S3, the Roy comparison, plus 30 EECU-hours kept for the stable-pixel mask and SPEI. Each month stays under the 850 EECU-hour stop line. |
+| Index-consistent trend (revision 7, approved) | A pixel is an index-consistent trend when it is FDR-significant in EVI2 and agrees in sign with NIRv and kNDVI. The label says only that the result does not depend on the index: all three indices come from the same harmonized red and NIR bands, so agreement does not confirm the trend independently or rule out a sensor artifact. The robustness evidence is the subset checks, the observation-density checks, the leave-one-year-out check, the harmonization diagnostics, and the Roy et al. comparison. The sensor-subset checks (ETM+ only and OLI only sign agreement, and the 2013 step test for each class) are reported as sample statistics with intervals from a bootstrap over chunks, by land cover class. Mixed forest and emergent wetlands, the classes with the largest offsets left by the harmonization, are reported separately. |
 
 ---
 
@@ -42,7 +45,7 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 | Endpoint check | Leave-one-year-out on EVI2 only |
 | Data location | All data in `C:\rsdata`, outside the repo and outside any synced folder. Set by the `RS_DATA_DIR` environment variable, with the config as fallback. Data paths are in `.gitignore`. |
 | Resumable jobs | Every long local job writes results chunk by chunk and skips chunks already done (Section 8.6) |
-| Gates before full runs | The one-year pilot export and the one-chunk benchmark come first, and the measured numbers go to you before anything else is launched |
+| Gates before full runs | The one-year pilot export and the one-chunk benchmark come first, and their measured numbers are reviewed before anything else is launched |
 
 ---
 
@@ -50,19 +53,19 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 
 | Area | Revision 1 | Revision 2 | Driven by |
 |---|---|---|---|
-| Period | 2015-2026 | 2000-2026, or 2000-2025 if the 2026 March-October season is incomplete in the archive | Your decision 1 |
-| Primary data | HLS v2.0 (Landsat 8/9 plus Sentinel-2) | Landsat Collection 2 Level-2 surface reflectance, Landsat 5, 7, 8, 9. Sentinel-2 dropped. | Your decision 1 |
-| Harmonization | Built into HLS | Red and NIR of TM and ETM+ harmonized to OLI with coefficients fitted on Collection 2 data in the study area. Roy et al. (2016) coefficients as a comparison. | Your decision 1 and new evidence (Section 3) |
+| Period | 2015-2026 | 2000-2026, or 2000-2025 if the 2026 March-October season is incomplete in the archive | Phase 1 decision 1 |
+| Primary data | HLS v2.0 (Landsat 8/9 plus Sentinel-2) | Landsat Collection 2 Level-2 surface reflectance, Landsat 5, 7, 8, 9. Sentinel-2 dropped. | Phase 1 decision 1 |
+| Harmonization | Built into HLS | Red and NIR of TM and ETM+ harmonized to OLI with coefficients fitted on Collection 2 data in the study area. Roy et al. (2016) coefficients as a comparison. | Phase 1 decision 1 and new evidence (Section 3) |
 | Landsat 7 | Not used | Used 2000-2019, excluded from 2020 onward because of orbit drift | Qiu et al. 2021, USGS |
 | Landsat 5 | Not used | Used 2000-2011 with year-specific adjustment to Landsat 7, because its orbit drifted fast in 2003-2007 | Zhang and Roy 2016, Roy et al. 2020 |
-| Primary index | EVI | EVI2. NIRv and kNDVI as sensitivity checks. | Your decision 1, Section 4 |
-| Research questions | Five | Three | Your decision 3 |
-| Robustness | A research question with five checks | A sensitivity analysis section with three checks. MODIS and VIIRS checks dropped. | Your decision 3 |
-| Land cover change | Area estimation with your reference labels | Removed. Annual NLCD used only to define stable pixels. Accuracy assessment listed as future work. | Your decision 4 |
-| Study area | Open question | Full Province 255, Texas and Oklahoma | Your decision 5 |
-| Compute | Rough estimate | Full estimate for 27 years, chunked local processing with dask and xarray, sized to your laptop | Your decision 6 |
-| Non-monotonic trends | Not addressed | Stated limitation plus descriptive trajectories and a break check inside RQ3 | Your note |
-| Phases | Six | Five. The accuracy assessment phase is removed, so outputs become Phase 5. | Your decision 4 |
+| Primary index | EVI | EVI2. NIRv and kNDVI as sensitivity checks. | Phase 1 decision 1, Section 4 |
+| Research questions | Five | Three | Phase 1 decision 3 |
+| Robustness | A research question with five checks | A sensitivity analysis section with three checks. MODIS and VIIRS checks dropped. | Phase 1 decision 3 |
+| Land cover change | Area estimation with manual reference labels | Removed. Annual NLCD used only to define stable pixels. Accuracy assessment listed as future work. | Phase 1 decision 4 |
+| Study area | Open question | Full Province 255, Texas and Oklahoma | Phase 1 decision 5 |
+| Compute | Rough estimate | Full estimate for 27 years, chunked local processing with dask and xarray, sized to the local laptop | Phase 1 decision 6 |
+| Non-monotonic trends | Not addressed | Stated limitation plus descriptive trajectories and a break check inside RQ3 | Phase 1 review note |
+| Phases | Six | Five. The accuracy assessment phase is removed, so outputs become Phase 5. | Phase 1 decision 4 |
 | References | 42 (38 science, 4 software) | 46 (40 science, 6 software). Removed 10 that no longer apply, added 14. Removals listed in Section 2.8. | All of the above |
 
 **MODIS and VIIRS checks: dropped, and I agree they are not essential.** They existed to test the MODIS drift problem. With Landsat as the only record, the right test of sensor effects is inside the Landsat family itself: compare single-sensor subsets against the mixed record over the same years. That is check (a). A 500 m VIIRS comparison would add a resolution mismatch without testing anything check (a) does not already test.
@@ -88,7 +91,7 @@ Status: **approved** (revision 3, 2026-11-25). Revision 4 (2026-11-26) records t
 - Our indices (EVI2, NIRv, kNDVI) depend on NIR, the band Qiu et al. (2021) found most affected by the drift. NDVI partly cancels the effect because it is a ratio. EVI2 and NIRv do not.
 - Qiu et al. found effects detectable but small through 2020. USGS says the crossing time left requirements in early 2020. A January 1, 2020 cutoff keeps the well-characterized years and drops the rest.
 - The cost is low. Landsat 8 alone covers 2020-2021, and Landsat 9 joins from 2022.
-- Cutting at the last maneuver (August 2017) would be more cautious. I don't recommend it because Qiu et al. found no meaningful effect before 2019, and it would throw away two more years of observations. If you prefer it, it is a one-line config change.
+- Cutting at the last maneuver (August 2017) would be more cautious. It is not used because Qiu et al. found no meaningful effect before 2019, and it would throw away two more years of observations. It is a one-line config change.
 
 ---
 
@@ -266,10 +269,12 @@ Offsets are mean EVI2 (OLI minus transformed ETM+) at the 2013-2017 sample point
 
 **Final coefficients.** Version harm-v1-2026-11-27, stored in `outputs/harmonization/coefficients.json` with its SHA-256 in the config. The export script refuses any other file. Each pixel takes its group's ETM+ to OLI line from its Annual NLCD class in that year (2026 uses 2025, the latest Annual NLCD year). A pixel with no class in Annual NLCD, or a class outside the groups (open water, perennial snow), takes the single fit. The export script checks that every year in a batch has an Annual NLCD year at or before it. In practice the lookup only matters for TM and ETM+ observations (2000-2019), because OLI is the reference and is not transformed.
 3. **TM to ETM+, year by year.** For each year 2000-2011, fit the same way using Landsat 5 and Landsat 7 medians from that year (same points). Revision 5: points need at least 6 clear observations from each sensor in that year. A minimum of 10 kept only 6-49% of points, because Landsat 7 scan line gaps cut clear counts after 2003. With 6, each year keeps 36-85% of points in 118-192 boxes. Landsat 7 held its orbit during those years, so year-specific coefficients absorb the Landsat 5 drift that Zhang and Roy (2016) and Roy et al. (2020) documented, including its fast 2003-2007 change. As a check, slope and level were also modelled as smooth functions of time. The raw TM to ETM+ EVI2 offsets differ from zero in 8 of 12 years but change sign between neighbouring years, so a smooth curve does not remove them and the yearly fits do.
+
+**Limitation: per-year class lookup.** The group line for a pixel comes from its Annual NLCD class in each year, so a pixel whose class moves between groups gets different coefficients before and after the change. In a random sample of 57,958 province pixels, 10.5% change group at least once over 2000-2025 and 8.3% within 2000-2019, the years when TM and ETM+ observations are transformed. Most of these switch once, a real land cover change, and for those the new group's line is the physically better match. 2.4% of the province switches two or more times, more likely classification flicker. Applied to the same Landsat 7 reflectances, the group lines differ by 0.003-0.010 EVI2 (median 0.005). Because the transform stops after 2019, the false trend from a switch depends on its year. The worst case (the largest step, switching in the early 2000s) is 0.0004 EVI2 per year, 0.30 times the median detectable trend of pixels that change group (0.15 times for a typical step). We keep the per-year lookup, flag pixels that switch group two or more times, and report the class summaries with and without them (Section 5). Harmonization is applied to each observation in Earth Engine before compositing, so it cannot be redone exactly in the local analysis.
 4. **Chain.** TM goes to ETM+ (by year) and then to OLI. Landsat 9 is treated as OLI (Gross et al. 2022).
 5. **Apply per observation.** A median of one band commutes with an increasing linear transform, so coefficients fitted on season medians apply directly to each observation before indices are computed.
 6. **Report.** The coefficients, their cluster-bootstrap confidence intervals, how far they differ from Roy et al. (2016) OLS and RMA, and the EVI2 offset each one removes, overall and by land cover class. Bias removal is the main criterion. If our coefficients are close to Roy's, that is useful confirmation. If not, that is itself a finding about Collection 2.
-7. **Comparison run.** The full EVI2 trend is repeated with Roy et al. (2016) coefficients and the difference in slopes is reported.
+7. **Comparison run (revision 7).** The EVI2 trend is repeated with Roy et al. (2016) coefficients on the subset chunk sample (Section 0.0) and the difference in slopes is reported. Only 2000-2019 need new composites, because later years are OLI only and are not transformed.
 
 **Why season medians and not same-day pairs.** Landsat 5 and 7, and Landsat 7 and 8, image the same path 8 days apart, so true same-day pairs exist only in narrow sidelap zones. Matching season medians fits our use exactly, because our composites are season medians. Different acquisition dates add noise to the fit but no systematic bias, given thousands of sample pixels.
 
@@ -329,7 +334,7 @@ The rules are applied in that order. The data quality report gives the number an
 ### 5.4 RQ2: trends by land cover class
 - Stable pixels: same Annual NLCD class in every year 2000-2025, and Annual NLCD confidence above a config threshold. Over 26 years, especially around Dallas-Fort Worth, Austin, and Houston, the stable share will be lower than in revision 1. Its size is reported.
 - Classes aggregated to about 8 (water, developed, barren, forest, shrubland, grassland, pasture and hay, cultivated crops, wetlands, with water and developed excluded from interpretation).
-- Per class: share greening, browning, and no detectable trend, and median slope with a bootstrap interval.
+- Per class: share greening, browning, and no detectable trend, and median slope with a bootstrap interval. Each class summary is reported twice: with all pixels, and without pixels that switch harmonization group two or more times (class flicker flag, Section 3).
 - Accuracy context: Annual NLCD's own validation from the USGS user guide, plus Wickham et al. (2023) for known class confusions. No new accuracy assessment in this study.
 
 ### 5.5 RQ3: how much trend remains after accounting for drought
@@ -352,7 +357,7 @@ The rules are applied in that order. The data quality report gives the number an
 
 **(c) Index agreement.** Repeat RQ1 with NIRv and kNDVI over the whole province (revision 6 restores this after the revision 4 sample design). Report sign agreement among significant pixels and correlation of standardized slopes (slope divided by each pixel's interannual standard deviation, since the indices have different units).
 
-A pixel is called a **robust trend** when it is FDR-significant in EVI2, keeps its sign in the applicable subset from (a), and agrees in sign with NIRv and kNDVI (the original definition, restored in revision 6).
+A pixel is called an **index-consistent trend** when it is FDR-significant in EVI2 and agrees in sign with NIRv and kNDVI (revision 7). This shows the result does not depend on the index. It is not independent confirmation, because the three indices share the same harmonized red and NIR bands. The subset checks in (a), run on the chunk sample, the observation-density checks in (b), and the leave-one-year-out check carry the robustness evidence and are reported as sample or province statistics by class.
 
 ### 5.7 Non-monotonic trends: how the paper handles them
 A 27-year record that contains the 2011 drought, the recovery after it, and the 2022 drought is unlikely to be monotonic everywhere. Theil-Sen and Mann-Kendall estimate the net monotonic tendency, and a pixel that browned then greened can show no trend at all (de Jong et al. 2012). The paper handles this in four ways without a new research question:
@@ -396,9 +401,9 @@ All dataset DOIs resolve at doi.org as of 2026-11-25. Access dates go in the REA
 
 ---
 
-## 8. Compute estimate (for your approval before Phase 3)
+## 8. Compute estimate (written before the pilot, superseded by Section 0.0)
 
-Your machine: AMD Ryzen 7 7730U (8 cores, 16 threads), 15.4 GB RAM, 790 GB free on C:.
+Local hardware: a laptop with an 8-core processor and about 16 GB of RAM.
 
 Province 255 is 246,477 km2 as measured in Phase 3, which is **about 274 million valid 30 m pixels** (revision 3 said 207,500 km2 and 231 million). Pixels outside the boundary are stored as nodata and compress to almost nothing.
 
@@ -422,7 +427,7 @@ Small integer count bands compress well, so the compressed figure is likely at t
 
 **Earth Engine compute quota.** Since April 27, 2026, noncommercial projects have a monthly compute quota in EECU-hours, and batch exports count against it. The Community tier gives 150 EECU-hours per month with no billing account. The Contributor tier gives 1,000 EECU-hours per month. It requires an active billing account for identity verification, but Earth Engine noncommercial use is not charged. Going over the quota does not stop tasks, but the project drops into a restricted mode with lower throughput until the quota resets on the first of the month (Earth Engine noncommercial tiers page). I can't predict our EECU use before the pilot. The pilot reports the EECU-hours one year actually used, and I will project the total from that. If the projection fits under 150 per month across a few months, Community is fine. If not, Contributor is the practical choice.
 
-Earth Engine run time: about 55 export tasks. Export speed varies with Earth Engine load, so I can't promise a number. My working estimate is 1-4 hours per annual task, run a few at a time, for **1-4 days of wall clock time**. It runs unattended. I will run a one-year pilot export first and give you a measured number before launching the rest.
+Earth Engine run time: about 55 export tasks. Export speed varies with Earth Engine load. The pre-pilot working estimate was 1-4 hours per annual task, run a few at a time, for **1-4 days of wall clock time**, unattended. The pilot export came first to measure it.
 
 Download: 35-45 GB takes about 2 hours at 50 Mbps, or about 5 hours at 20 Mbps.
 
@@ -437,7 +442,7 @@ Download: 35-45 GB takes about 2 hours at 50 Mbps, or about 5 hours at 20 Mbps.
 | Trend outputs for NIRv, kNDVI, two subsets, Roy comparison (slope, p, q) | about 14 GB raw, 9 GB compressed |
 | RESTREND outputs | about 5 GB |
 | Scratch space for dask | 10-20 GB |
-| **Peak need** | **about 85-110 GB**, so plan for 120 GB. You have 790 GB free. |
+| **Peak need** | **about 85-110 GB**, so plan for 120 GB. |
 
 All of it lives under `C:\rsdata` (Section 8.6), never in the repo.
 
@@ -447,7 +452,7 @@ All of it lives under `C:\rsdata` (Section 8.6), never in the repo.
 - **4 dask workers, about 6 GB peak**, leaves headroom on 15.4 GB for Windows and other apps. Chunks entirely outside the province are skipped.
 
 ### 8.4 Local run time (estimates, to be benchmarked)
-These are estimates from operation counts, not measurements. The environment does not exist yet, so I could not benchmark. In Phase 3, before any full run, I will time one chunk and update these numbers.
+These were estimates from operation counts, made before the environment existed. Phase 3 timed one chunk, and the table below gives the measured numbers.
 
 Revision 6: measured on one 512 x 512 chunk in Phase 3 (4 workers, one BLAS thread each, 0.268 chunks per second, 1,318 chunks).
 
@@ -479,18 +484,18 @@ Steps for every batch:
 
 1. **Export.** `conda run -n rs-trends python src/03_export.py --batch B1` submits that batch's tasks to a Drive folder named after the batch (for example `rs_trends_B1`). The script refuses main batches until the pilot is verified and the harmonization coefficients are final (revision 5: batches no longer wait for each other).
 2. **Wait.** `conda run -n rs-trends python src/03_export.py --status` shows task states and EECU use. Or watch the Tasks list in the Earth Engine Code Editor.
-3. **Download.** In Google Drive in your browser, right-click the batch folder and choose Download. Drive zips it, in several parts for large folders. Save the zips to `C:\rsdata\incoming\B1`. Do not use the Google Drive desktop sync app for this, because that would put the data in a synced folder.
+3. **Download.** In Google Drive in a browser, right-click the batch folder and choose Download. Drive zips it, in several parts for large folders. Save the zips to `C:\rsdata\incoming\B1`. Do not use the Google Drive desktop sync app for this, because that would put the data in a synced folder.
 4. **Verify.** `conda run -n rs-trends python src/03_verify_batch.py --batch B1` unzips, checks that every expected file is present, opens each one, and checks CRS (the Annual NLCD Albers grid on WGS84), 30 m pixels, alignment to the NLCD grid, band names, data types, and nodata. It writes a SHA-256 checksum for every file to `C:\rsdata\manifest.csv` with the batch, file name, size, and date. It then moves the files to `C:\rsdata\raw\` and prints PASS or FAIL.
 5. **Delete, only after PASS.** Delete the batch folder in Drive, then empty the Drive trash. Trashed files still count against the Drive quota until the trash is emptied. Deleting needs approval each time.
 6. **Ledger.** The verify step records the batch as verified in `logs/batches.json`.
 
-If verify FAILS, the script lists what is wrong, keeps the files in `incoming`, and you do not delete anything from Drive. We fix it and re-export only the failed pieces.
+If verify FAILS, the script lists what is wrong and keeps the files in `incoming`, and nothing is deleted from Drive. The failed pieces are fixed and re-exported.
 
 ### 8.6 Data location and resumable jobs
 
 - **Location.** All data lives under `C:\rsdata`, which is outside the repo and outside OneDrive and Dropbox. Scripts read the path from the `RS_DATA_DIR` environment variable, falling back to the config value. Subfolders: `incoming`, `raw`, `interim`, `outputs`, `logs`. `.gitignore` excludes data file types and any local data folders as a second safeguard.
 - **Resumable jobs.** Every long local job splits the grid into fixed chunks. Each chunk's results are written to the output store as soon as they are computed, and a small "done" marker for that chunk is written only after the results are safely on disk. On restart, the job skips every chunk with a marker. A crash loses at most the chunks in progress. Markers are written atomically (to a temporary file, then renamed) so a crash mid-write cannot leave a false "done".
-- **Gates.** The pilot export (batch P) and a one-chunk benchmark run first. I report the measured export time, file size, compression ratio, EECU-hours, and per-chunk run time, with updated totals, and wait for your go-ahead before launching anything else.
+- **Gates.** The pilot export (batch P) and a one-chunk benchmark run first. Their measured export time, file size, compression ratio, EECU-hours, and per-chunk run time, with updated totals, are reviewed before anything else is launched.
 
 ---
 
@@ -518,7 +523,7 @@ Photogrammetric Engineering & Remote Sensing (PE&RS). Alternative: Remote Sensin
 
 | Phase | Work | Estimate |
 |---|---|---|
-| 2 Setup | conda env, repo skeleton, config, CI with secret scanning, Earth Engine sign-in by you | 1-2 sessions |
+| 2 Setup | conda env, repo skeleton, config, CI with secret scanning, Earth Engine sign-in | 1-2 sessions |
 | 3 Data | boundary, harmonization sample and fit, QA and composites, pilot export, full exports (1-4 days unattended), data quality report, one-chunk benchmark | about 1-2 weeks |
 | 4 Analysis | trends, FDR, power, endpoint check, class summaries, drought and RESTREND, sensitivity checks | about 1-2 weeks |
 | 5 Outputs | figures, tables, README, manuscript outline with draft methods and results | about 1 week |
@@ -533,7 +538,7 @@ Photogrammetric Engineering & Remote Sensing (PE&RS). Alternative: Remote Sensin
 | SLC-off stripes visible in composites | Multi-date medians, Landsat 5 and 8 overlap, count maps reviewed in the quality report |
 | Non-monotonic trajectories | Limitation, trajectories figure, RQ3 break check |
 | Smaller stable-pixel share over 26 years | Share reported per class. Classes with too few stable pixels are flagged. |
-| Drive quota smaller than exports | Batched exports or a Cloud Storage bucket (your choice) |
+| Drive quota smaller than exports | Batched exports or a Cloud Storage bucket |
 | 2026 season incomplete | Decision rule in Section 7 |
 | Earth Engine export failures | Export by year with resume logic and a pilot first |
 
@@ -547,7 +552,7 @@ Photogrammetric Engineering & Remote Sensing (PE&RS). Alternative: Remote Sensin
 
 ## 15. Decisions
 
-All decisions from revision 2 were resolved in revision 3 (Section 0.1). The one open item is the Earth Engine quota tier, which is decided after the pilot measures EECU use (Section 8.1).
+All decisions from revision 2 were resolved in revision 3 (Section 0.1), and the decisions after the pilot are in Section 0.0. The Earth Engine tier is Contributor. No decisions are open.
 
 ---
 
