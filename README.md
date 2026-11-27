@@ -53,9 +53,9 @@ Composites are made in Google Earth Engine under a noncommercial quota measured 
 | Main composites, 15 years (batches B1, B2, B4), measured | 470.6 (projected 484) |
 | Main composites, other 12 years, projected | 375 |
 | Single-sensor subsets 2015-2017, whole-province region, measured | 91.2 |
-| Single-sensor subsets, other 17 years, one export per chunk, projected | about 56 |
-| Roy et al. comparison on the chunk sample, one export per chunk, projected | about 25 |
-| **Composites and checks, projected total** | **about 1,020** |
+| Single-sensor subsets, other 17 years, one export per chunk, projected | about 45 |
+| Roy et al. comparison on the chunk sample, one export per chunk, projected | about 66 |
+| **Composites and checks, projected total** | **about 1,050** |
 
 This table will be updated with measured values as batches finish.
 
