@@ -33,4 +33,3 @@ dependencies:
   # Quality
   - pytest
   - ruff
-  - gitleaks             # secret scan of the git history, run locally before a push (CI runs it too)
