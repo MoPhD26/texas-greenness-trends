@@ -137,6 +137,12 @@ export:
     etm: {family: "ETM", years: [2000, 2019]}
     oli: {family: "OLI", years: [2013, 2019]}
 
+verify:                            # content checks in src/03_verify_batch.py
+  decimate: 8                      # read every 8th pixel (about 10 million pixels per year)
+  max_valid_share_drop: 0.05       # flag a year whose valid share is this far below the median
+  max_median_evi2_shift: 0.05      # flag a year whose median EVI2 is this far from the median
+  evi2_range: [-0.2, 1.0]          # flag a year whose 1st or 99th percentile falls outside
+
 index_checks:
   indices: ["nirv", "kndvi"]       # province wide, pixel level (revision 6 restores this)
 

@@ -8,7 +8,13 @@ files to <data>/raw/<batch>, and marks the batch verified. Nothing is deleted.
 Also checks that every year of the batch is present, that band names match the expected order,
 and that each year's tiles together cover the export grid (gee.export_region).
 
-  --keep   check and record only, leave the files in incoming (nothing is moved)
+Content checks (every batch but the pilot): per year and product, the share of pixels inside
+the province (and the sampled chunks, for subsets) that hold a value, EVI2 percentiles, and the
+median clear count, from every 8th pixel. Years out of line with the other verified years of the
+same product are flagged. They are reported, not failed.
+
+  --keep          check and record only, leave the files in incoming (nothing is moved)
+  --content-only  run only the content checks, on files already verified
 
 Run:
   conda run -n rs-trends python src/03_verify_batch.py --batch P
@@ -25,11 +31,24 @@ import re
 import shutil
 import zipfile
 
+import geopandas as gpd
+import numpy as np
+import pandas as pd
 import pyproj
 import rasterio
+import shapely
+from rasterio.enums import Resampling
+from rasterio.features import geometry_mask
 
-from rstrends.batches import export_bands, subset_bands
+from rstrends.batches import (
+    SUB_SEASON_PREFIX,
+    chunk_product_years,
+    export_bands,
+    multi_year_bands,
+    subset_bands,
+)
 from rstrends.config import data_dir, ee_project, load_config
+from rstrends.content import flag_years, year_content
 
 MAX_ZERO_SHARE = 0.01  # band 1 (EVI2 x 10000) is exactly 0 in far fewer pixels than this
 PILOT_BANDS = 7  # the pilot used the earlier design: 3 indices, 3 counts, acquisitions
@@ -39,6 +58,9 @@ def expected_bands(cfg: dict, batch: str, filename: str) -> int:
     """Band count for one file, from the year in its name (main_YYYY...)."""
     if batch == "P":
         return PILOT_BANDS
+    c = re.search(r"(subsets|roy)_r\d{6}_c\d{6}", filename)
+    if c:  # per-chunk export, years as bands (src/03_chunk_export.py)
+        return len(multi_year_bands(cfg, chunk_product_years(cfg, c.group(1)), c.group(1)))
     m = re.search(r"(main|subsets)_(\d{4})", filename)
     if not m:
         raise SystemExit(f"cannot read the year from {filename}")
@@ -54,15 +76,132 @@ def sha256(path) -> str:
     return h.hexdigest()
 
 
+def area_mask(shapes, shape, transform) -> np.ndarray:
+    """True inside any of the shapes (planar, in the file CRS)."""
+    return ~geometry_mask(shapes, out_shape=shape, transform=transform)
+
+
+def content_check(cfg: dict, root, batch: str, tifs: list) -> list[str]:
+    """Per year and product: valid share inside the area, EVI2 percentiles, clear counts.
+
+    Reads every decimate-th pixel. The area is the province outline, intersected with the
+    sampled chunks for subset files. Writes <data>/logs/content_<batch>.csv and returns flags
+    for years out of line with the other verified years of the same product.
+    """
+    v = cfg["verify"]
+    k = v["decimate"]
+    nodata = cfg["export"]["nodata"]
+    scale = cfg["indices"]["storage_scale"]
+    seasons = list(cfg["season"]["sub_seasons"])
+    with rasterio.open(tifs[0]) as s0:
+        crs = s0.crs
+    prov = gpd.read_file(root / "raw" / "boundary" / "province255.gpkg").to_crs(crs)
+    prov_shapes = list(prov.geometry)
+    chunk_shapes = None
+    by_year: dict[tuple[str, int], list] = {}
+    for path in tifs:
+        m = re.search(r"(main|subsets)_(\d{4})", path.name)
+        if m:
+            by_year.setdefault((m.group(1), int(m.group(2))), []).append(path)
+    rows = []
+    if not by_year:
+        print("content checks: per-chunk files are checked in the Phase 4 chunk reader")
+        return []
+    for (kind, year), paths in sorted(by_year.items()):
+        if kind == "main":
+            products = {"main": ("evi2", [f"{SUB_SEASON_PREFIX}{s}" for s in seasons])}
+        else:
+            products = {
+                name: (f"{name}_evi2", [f"{name}_{SUB_SEASON_PREFIX}{s}" for s in seasons])
+                for name in cfg["export"]["subsets"]
+                if f"{name}_evi2" in subset_bands(cfg, year)
+            }
+            if chunk_shapes is None:
+                c = pd.read_csv(root / "interim" / "subset_chunks.csv")
+                c = c[c.sampled]
+                chunk_shapes = [
+                    shapely.box(r.ulx, r.uly - r.h * 30, r.ulx + r.w * 30, r.uly)
+                    for r in c.itertuples()
+                ]
+        for product, (ib, cbs) in products.items():
+            idx_parts, cnt_parts, in_parts = [], [], []
+            for path in paths:
+                with rasterio.open(path) as src:
+                    names = list(src.descriptions)
+                    shp = (max(1, src.height // k), max(1, src.width // k))
+                    bands = [names.index(ib) + 1] + [names.index(b) + 1 for b in cbs]
+                    arr = src.read(
+                        bands, out_shape=(len(bands), *shp), resampling=Resampling.nearest
+                    )
+                    t = src.transform * rasterio.Affine.scale(
+                        src.width / shp[1], src.height / shp[0]
+                    )
+                    inside = area_mask(prov_shapes, shp, t)
+                    if kind == "subsets":
+                        inside &= area_mask(chunk_shapes, shp, t)
+                idx_parts.append(arr[0].ravel())
+                cnt_parts.append(arr[1:].reshape(len(cbs), -1))
+                in_parts.append(inside.ravel())
+            r = year_content(
+                np.concatenate(idx_parts),
+                np.concatenate(cnt_parts, axis=1),
+                np.concatenate(in_parts),
+                nodata,
+                scale,
+                cfg["validity"]["min_clear_obs_per_year"],
+            )
+            rows.append({"batch": batch, "product": product, "year": year, **r})
+    table = pd.DataFrame(rows)
+    out = root / "logs" / f"content_{batch}.csv"
+    table.to_csv(out, index=False)
+    # Reference: this batch plus every earlier content table, per product
+    ref = pd.concat(
+        [pd.read_csv(p) for p in sorted((root / "logs").glob("content_*.csv")) if p != out]
+        + [table]
+    )
+    flags = []
+    for product, g in table.groupby("product"):
+        hist = ref[ref["product"] == product].drop_duplicates(["product", "year"], keep="last")
+        f = flag_years(
+            hist.to_dict("records"),
+            v["max_valid_share_drop"],
+            v["max_median_evi2_shift"],
+            tuple(v["evi2_range"]),
+            cfg["validity"]["min_clear_obs_per_year"],
+        )
+        years = {str(y) for y in g.year}
+        flags += [f"{product} {x}" for x in f if x.split(":")[0] in years]
+    show = ["product", "year", "valid_share", "p1", "p5", "p50", "p95", "p99"]
+    show += ["median_clear", "share_min_clear"]
+    print(table[show].to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+    print(f"content table written to {out}")
+    return flags
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
     ap.add_argument("--keep", action="store_true", help="leave the files in incoming")
+    ap.add_argument(
+        "--content-only",
+        action="store_true",
+        help="run only the content checks on files already verified (no checksums, no move)",
+    )
     args = ap.parse_args()
 
     cfg = load_config()
     root = data_dir(cfg)
     inc = root / "incoming" / args.batch
+    if args.content_only:
+        where = [inc, root / "raw" / args.batch]
+        tifs = next((sorted(d.rglob("*.tif")) for d in where if list(d.rglob("*.tif"))), [])
+        if not tifs:
+            raise SystemExit(f"no GeoTIFFs for {args.batch} in incoming or raw")
+        flags = content_check(cfg, root, args.batch, tifs)
+        print("content flags:" if flags else "content flags: none")
+        for f in flags:
+            print(f"  {f}")
+        return
     if not inc.exists():
         raise SystemExit(f"{inc} does not exist. Download the Drive folder there first.")
     for z in inc.glob("*.zip"):
@@ -161,6 +300,11 @@ def main() -> None:
         problems.append("band 1 has no nodata pixels, so masked pixels were not written as nodata")
     if zero_share > MAX_ZERO_SHARE:
         problems.append(f"band 1 is exactly 0 in {zero_share:.1%} of pixels (masked written as 0?)")
+    if args.batch != "P":
+        flags = content_check(cfg, root, args.batch, tifs)
+        print("content flags:" if flags else "content flags: none")
+        for f in flags:
+            print(f"  {f}")
     if problems:
         print("FAIL")
         for p in problems:
