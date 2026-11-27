@@ -17,7 +17,7 @@ credentials.json
 # These rules are a second safeguard in case a file lands here by mistake.
 data/
 rsdata/
-# Running reports live in C:sdataeports, outside the repo. Never add them here.
+# Running reports live in C:\rsdata\reports, outside the repo. Never add them here.
 reports/
 docs/*report*.md
 incoming/
