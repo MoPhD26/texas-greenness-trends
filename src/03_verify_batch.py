@@ -23,7 +23,7 @@ import zipfile
 import pyproj
 import rasterio
 
-from rstrends.batches import export_bands
+from rstrends.batches import export_bands, subset_bands
 from rstrends.config import data_dir, ee_project, load_config
 
 MAX_ZERO_SHARE = 0.01  # band 1 (EVI2 x 10000) is exactly 0 in far fewer pixels than this
@@ -34,10 +34,11 @@ def expected_bands(cfg: dict, batch: str, filename: str) -> int:
     """Band count for one file, from the year in its name (main_YYYY...)."""
     if batch == "P":
         return PILOT_BANDS
-    m = re.search(r"main_(\d{4})", filename)
+    m = re.search(r"(main|subsets)_(\d{4})", filename)
     if not m:
         raise SystemExit(f"cannot read the year from {filename}")
-    return len(export_bands(cfg, int(m.group(1))))
+    year = int(m.group(2))
+    return len(subset_bands(cfg, year) if m.group(1) == "subsets" else export_bands(cfg, year))
 
 
 def sha256(path) -> str:

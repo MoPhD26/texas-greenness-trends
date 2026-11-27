@@ -3,6 +3,8 @@
   --batch P        submit the pilot (one year, export.pilot_year)
   --batch B1 ...   submit main-stack batches. Several may run at once (400 GB of Drive holds
                    all of them). Refused until the pilot is verified.
+  --batch S1 ...   submit single-sensor subset batches (ETM+ only, OLI only) on the sampled
+                   chunks from src/03_subset_chunks.py. S1-S4 mirror the years of B1-B4.
   --status         show state, run time, and EECU-hours of every submitted task
 
 Each year is one export task, written as int16 plain GeoTIFF tiles (no overviews) on the Annual
@@ -26,7 +28,7 @@ import json
 from pathlib import Path
 
 from rstrends import tasklog
-from rstrends.batches import main_batches
+from rstrends.batches import main_batches, subset_batches
 from rstrends.config import data_dir, ee_project, load_config
 
 
@@ -46,6 +48,8 @@ def main() -> None:
     ledger_path = root / "logs" / "batches.json"
     ledger = load_ledger(ledger_path)
     batches = main_batches(cfg)
+    if cfg["export"].get("subsets_on_sample", False):
+        batches.update(subset_batches(cfg))
 
     import ee
 
@@ -81,21 +85,30 @@ def main() -> None:
         gpkg = root / "raw" / "boundary" / "province255.gpkg"
         fc = gee.province(gpkg)
         filt = gee.filter_geometry(gpkg, cfg["export"]["filter_buffer_m"])
+        region, _ = gee.export_region(cfg, gpkg)
+        is_subset = name.startswith("S")
+        if is_subset:
+            sample = gee.sample_chunks_fc(cfg, root / "interim" / "subset_chunks.csv")
+            region = sample.geometry()
         wkt, transform = gee.grid(cfg)
         folder = f"{cfg['export']['drive_folder_prefix']}{name}"
         ids = []
         for year in batches[name]:
-            img = gee.annual_composite_production(cfg, year, fc, filt, harm)
+            if is_subset:
+                img = gee.annual_subsets(cfg, year, fc, sample, filt, harm)
+            else:
+                img = gee.annual_composite_production(cfg, year, fc, filt, harm)
             # Write masked pixels as nodata explicitly. The pilot showed that the noData format
             # option alone leaves masked pixels as 0, which is a valid EVI2 value.
             img = img.unmask(cfg["export"]["nodata"], False)
-            desc = f"{name}_main_{year}"
+            kind = "subsets" if is_subset else "main"
+            desc = f"{name}_{kind}_{year}"
             task = ee.batch.Export.image.toDrive(
                 image=img,
                 description=desc,
                 folder=folder,
-                fileNamePrefix=f"main_{year}",
-                region=fc.geometry().bounds(),
+                fileNamePrefix=f"{kind}_{year}",
+                region=region,
                 crs=wkt,
                 crsTransform=transform,
                 maxPixels=int(1e13),

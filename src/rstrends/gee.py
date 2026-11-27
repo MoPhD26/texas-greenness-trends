@@ -252,27 +252,15 @@ def annual_composite(cfg: dict, year: int, fc: ee.FeatureCollection, harm: dict 
     return out.updateMask(province_mask(fc)).set("year", year)
 
 
-def annual_composite_production(
-    cfg: dict,
-    year: int,
-    fc: ee.FeatureCollection,
-    filt: ee.Geometry,
-    harm: dict | None,
-    max_cloud: float | None = None,
-) -> ee.Image:
-    """One year's main export (revision 6 production design).
+def observations_by_family(
+    cfg: dict, year: int, filt: ee.Geometry, harm: dict | None, max_cloud: float | None = None
+) -> dict[str, ee.ImageCollection]:
+    """Harmonized clear observations with indices for one season, keyed by sensor family.
 
-    The computation of the pilot design: median of EVI2, NIRv, and kNDVI over all harmonized
-    clear observations, and one count per sub-season. Scenes are filtered by the buffered
-    province outline and by land cloud cover. The single-sensor subset bands (EVI2 median and
-    sub-season counts from one sensor family only) are computed the same way and folded in.
-    Band order matches rstrends.batches.export_bands.
+    Scenes are filtered by the buffered province outline and by land cloud cover.
     """
-    from rstrends.batches import export_bands
-
     if max_cloud is None:
         max_cloud = cfg["qa"]["max_scene_cloud_cover_land"]
-    scale = cfg["indices"]["storage_scale"]
     by_family: dict[str, ee.ImageCollection] = {}
     for key in sensor_keys(cfg):
         win = sensor_window(cfg, key, year)
@@ -291,27 +279,132 @@ def annual_composite_production(
         by_family[fam] = by_family[fam].merge(col) if fam in by_family else col
     if not by_family:
         raise ValueError(f"no sensors cover the {year} season")
-    fams = list(by_family)
-    obs = by_family[fams[0]]
-    for f in fams[1:]:
-        obs = obs.merge(by_family[f])
+    return by_family
 
-    def stack(o: ee.ImageCollection, idx: list[str], prefix: str) -> ee.Image:
-        names = [f"{prefix}{b}" for b in idx]
-        out = o.select(idx).median().rename(names).multiply(scale).round().toInt16()
-        for name, (a, b) in cfg["season"]["sub_seasons"].items():
-            end = _date(f"{year}-{b}") + dt.timedelta(days=1)
-            n = o.filterDate(f"{year}-{a}", end.isoformat()).select("evi2").count()
-            out = out.addBands(n.unmask(0).toInt16().rename(f"{prefix}n_{name}"))
-        return out
 
-    out = stack(obs, list(cfg["export"]["main_indices"]), "")
+def _index_stack(cfg: dict, year: int, o: ee.ImageCollection, idx: list[str], prefix: str):
+    """Median of the index bands (int16, x storage_scale) and one clear count per sub-season."""
+    scale = cfg["indices"]["storage_scale"]
+    names = [f"{prefix}{b}" for b in idx]
+    out = o.select(idx).median().rename(names).multiply(scale).round().toInt16()
+    for name, (a, b) in cfg["season"]["sub_seasons"].items():
+        end = _date(f"{year}-{b}") + dt.timedelta(days=1)
+        n = o.filterDate(f"{year}-{a}", end.isoformat()).select("evi2").count()
+        out = out.addBands(n.unmask(0).toInt16().rename(f"{prefix}n_{name}"))
+    return out
+
+
+def _subset_stacks(cfg: dict, year: int, by_family: dict) -> list[ee.Image]:
+    out = []
     for name, sub in cfg["export"]["subsets"].items():
         if sub["years"][0] <= year <= sub["years"][1]:
             if sub["family"] not in by_family:
                 raise ValueError(f"subset {name} has no {sub['family']} data in {year}")
-            out = out.addBands(stack(by_family[sub["family"]], ["evi2"], f"{name}_"))
-    return out.select(export_bands(cfg, year)).updateMask(province_mask(fc)).set("year", year)
+            out.append(_index_stack(cfg, year, by_family[sub["family"]], ["evi2"], f"{name}_"))
+    return out
+
+
+def annual_composite_production(
+    cfg: dict,
+    year: int,
+    fc: ee.FeatureCollection,
+    filt: ee.Geometry,
+    harm: dict | None,
+    max_cloud: float | None = None,
+    subsets: bool | None = None,
+) -> ee.Image:
+    """One year's main export.
+
+    The computation of the pilot design: median of EVI2, NIRv, and kNDVI over all harmonized
+    clear observations, and one count per sub-season, with outline and cloud filtering.
+    subsets=None follows the config: with export.subsets_on_sample the single-sensor subset
+    bands are left out here and exported on the chunk sample (annual_subsets). subsets=True
+    folds them in (the revision 6 design, kept for the cost tests).
+    Band order matches rstrends.batches.export_bands.
+    """
+    from rstrends.batches import export_bands
+
+    if subsets is None:
+        subsets = not cfg["export"].get("subsets_on_sample", False)
+    by_family = observations_by_family(cfg, year, filt, harm, max_cloud)
+    fams = list(by_family)
+    obs = by_family[fams[0]]
+    for f in fams[1:]:
+        obs = obs.merge(by_family[f])
+    out = _index_stack(cfg, year, obs, list(cfg["export"]["main_indices"]), "")
+    if subsets:
+        for img in _subset_stacks(cfg, year, by_family):
+            out = out.addBands(img)
+    bands = export_bands(cfg, year, subsets=subsets)
+    return out.select(bands).updateMask(province_mask(fc)).set("year", year)
+
+
+def sample_chunks_fc(cfg: dict, chunks_csv) -> ee.FeatureCollection:
+    """Sampled 512 x 512 chunks (src/03_subset_chunks.py) as planar rectangles."""
+    import pandas as pd
+
+    wkt, transform = grid(cfg)
+    proj = ee.Projection(wkt)
+    a = transform[0]
+    c = pd.read_csv(chunks_csv)
+    c = c[c.sampled]
+    return ee.FeatureCollection(
+        [
+            ee.Feature(
+                ee.Geometry.Rectangle(
+                    [r.ulx, r.uly - r.h * a, r.ulx + r.w * a, r.uly], proj, False
+                ),
+                {"key": r.key},
+            )
+            for r in c.itertuples()
+        ]
+    )
+
+
+def annual_subsets(
+    cfg: dict,
+    year: int,
+    fc: ee.FeatureCollection,
+    sample: ee.FeatureCollection,
+    filt: ee.Geometry,
+    harm: dict | None,
+) -> ee.Image:
+    """Single-sensor subset bands for one year, on the sampled chunks inside the province.
+
+    Scenes are filtered by the sampled chunks, so only scenes that touch them are read.
+    Band order matches rstrends.batches.subset_bands.
+    """
+    from rstrends.batches import subset_bands
+
+    by_family = observations_by_family(cfg, year, sample.geometry(), harm)
+    parts = _subset_stacks(cfg, year, by_family)
+    if not parts:
+        raise ValueError(f"no single-sensor subset covers {year}")
+    out = parts[0]
+    for img in parts[1:]:
+        out = out.addBands(img)
+    mask = province_mask(fc).And(ee.Image().byte().paint(sample, 1))
+    return out.select(subset_bands(cfg, year)).updateMask(mask).set("year", year)
+
+
+def export_region(cfg: dict, gpkg_path):
+    """Province bounding box snapped to the Annual NLCD grid, as a planar rectangle.
+
+    Exports use this region, so every export and the chunk grid of the local analysis
+    (src/03_subset_chunks.py) share one origin. Returns (geometry, (ulx, uly, width, height)).
+    """
+    import geopandas as gpd
+    import pyproj
+
+    from rstrends.sampling import snap_bounds
+
+    wkt, transform = grid(cfg)
+    poly = gpd.read_file(gpkg_path).to_crs(pyproj.CRS.from_wkt(wkt)).geometry.iloc[0]
+    ulx, uly, w, h = snap_bounds(poly.bounds, transform)
+    rect = ee.Geometry.Rectangle(
+        [ulx, uly - h * transform[0], ulx + w * transform[0], uly], ee.Projection(wkt), False
+    )
+    return rect, (ulx, uly, w, h)
 
 
 def filter_geometry(gpkg_path, buffer_m: float) -> ee.Geometry:

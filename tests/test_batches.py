@@ -27,6 +27,23 @@ def test_export_bands_by_year():
     base = ["evi2", "nirv", "kndvi", "n_spring", "n_summer", "n_fall"]
     etm = ["etm_evi2", "etm_n_spring", "etm_n_summer", "etm_n_fall"]
     oli = ["oli_evi2", "oli_n_spring", "oli_n_summer", "oli_n_fall"]
-    assert export_bands(cfg, 2005) == base + etm
-    assert export_bands(cfg, 2015) == base + etm + oli
-    assert export_bands(cfg, 2022) == base
+    assert export_bands(cfg, 2005, subsets=True) == base + etm
+    assert export_bands(cfg, 2015, subsets=True) == base + etm + oli
+    assert export_bands(cfg, 2022, subsets=True) == base
+    cfg["export"]["subsets_on_sample"] = True
+    assert export_bands(cfg, 2015) == base
+
+
+def test_subset_bands_and_batches():
+    from rstrends.batches import subset_bands, subset_batches
+
+    cfg = load_config()
+    assert subset_bands(cfg, 2005) == ["etm_evi2", "etm_n_spring", "etm_n_summer", "etm_n_fall"]
+    assert len(subset_bands(cfg, 2015)) == 8 and subset_bands(cfg, 2022) == []
+    sb = subset_batches(cfg)
+    assert sb == {
+        "S1": list(range(2000, 2005)),
+        "S2": list(range(2005, 2010)),
+        "S3": list(range(2010, 2015)),
+        "S4": list(range(2015, 2020)),
+    }

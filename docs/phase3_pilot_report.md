@@ -394,3 +394,56 @@ E ran on its first attempt. It is above the 1 EECU-hour expected for the test an
 The November wave (B4, B1, B6, about 803) no longer fits the room left under the 850 line. B4 was not launched.
 
 Likely causes, not yet separated: each reduction re-reads the observations, and E adds a median and three counts for each subset on top of A's. The group harmonization adds four class lookups per observation in every pass.
+
+## 14. Diagnostic tile tests and revised design (2026-11-27 UTC)
+
+### 14.1 Where the cost goes (same 3,072 x 3,072 tile, 2015, all first attempts)
+
+| Variant | EECU-hours | Difference from E |
+|---|---|---|
+| E: revision 6 (group fits, subsets folded in) | 1.095 | |
+| F: E with the single ETM+ to OLI fit | 0.926 | group lookup costs 0.169 (15%) |
+| G: E without the subset bands | 0.485 | subset bands cost 0.610 (56%) |
+| A: pilot design, for reference | 0.519 | |
+
+The subset bands are the major cost: each subset adds its own median and three counts, and each of those re-reads that sensor's observations. The group lookup is a moderate cost. The coefficients are already built once per year as slope and intercept images and applied as one multiply-add per band per observation. The 15% is Earth Engine evaluating those class-based images inside each pass, so changing how the code builds them would not obviously remove it. I did not restructure it. Switching to the single fit would save roughly 50-70 EECU-hours, at the price of the class offsets the group fits remove.
+
+### 14.2 Revised design (revision 7, proposed)
+
+* Main export, every year, province wide: EVI2, NIRv, kNDVI, three sub-season counts, with group harmonization (design G).
+* Subset exports S1-S4 (2000-2019): ETM+ only and OLI only EVI2 and counts, on 253 sampled chunks (18.9% of province pixels). Scenes are filtered by the sampled chunks.
+* A 64 x 64 window inside a sampled chunk matches the revision 6 composite exactly in all 14 bands (6 main, 8 subset).
+
+### 14.3 Projection
+
+Scaled from the pilot by each year's scene count after the outline filter and cloud skip. Main bands use G / A = 0.93 for 2000-2019 and 1.0 for 2020-2026. Subset bands cost (E - G) / A per scene of the subset's own sensor, times the sample share.
+
+| Batch | Main | Subsets on the sample |
+|---|---|---|
+| B1 / S1 (2000-2004) | 154 | 19 |
+| B2 / S2 (2005-2009) | 162 | 19 |
+| B3 / S3 (2010-2014) | 148 | 27 |
+| B4 / S4 (2015-2019) | 168 | 40 |
+| B5 (2020-2024) | 151 | |
+| B6 (2025-2026) | 76 | |
+| Total | 860 | 105 |
+
+Total about 964 EECU-hours, under the 1,430 target. The earlier 1,655 for design E applied the 2015 subset cost to every scene in 2000-2012, when only the ETM+ subset exists. With subsets counted by their own sensor's scenes, design E would be about 1,413.
+
+Assumption to check: that the subset cost scales with the sampled area. The chunks are spread over the whole province, so they touch almost every scene, and the saving depends on Earth Engine computing only the tiles inside the export region. The first S4 year is the check (projection about 8 EECU-hours for 2015). Even if there is no saving, subsets province wide would bring the total to about 1,413.
+
+### 14.4 Size and local run time
+
+* Main stack: 162 band-years, about 57 GB. Batches B1-B5 about 10.5 GB each, B6 about 4.2 GB.
+* Subsets: 108 band-years on 18.9% of pixels, about 7 GB (S1 1.3, S2 1.3, S3 1.9, S4 2.6 GB).
+* Local compute: about 9 hours (trend suite for three indices 4.1 h, subsets on the sample 0.2 h, leave-one-year-out on EVI2-significant pixels 3.2 h, RESTREND and drought 1-2 h).
+
+### 14.5 Waves
+
+| Wave | Batches | EECU-hours |
+|---|---|---|
+| November, first | B4. Check its first finished year against the projection (2015 about 33). Stop and re-plan if more than 20% above. | 168 |
+| November, then | B1, B2, S4. Check the first S4 year against about 8. | 356 |
+| November total | | about 524, leaving about 57 under the 850 line after the 30 reserve |
+| December, after the reset | B3, B5, B6, S1, S2, S3 | about 440 |
+| Reserve | stable-pixel mask, SPEI | 30 |

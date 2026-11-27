@@ -49,3 +49,30 @@ def pick_boxes(poly, transform, n: int, box_px: int, seed: int, max_draws: int =
         corners[cell] = (col, row)
         chosen.append((ulx, uly))
     return chosen
+
+
+def snap_bounds(bounds, transform) -> tuple[float, float, int, int]:
+    """Grid-aligned upper-left corner, width, and height covering (xmin, ymin, xmax, ymax)."""
+    a, _, x0, _, e, y0 = transform
+    xmin, ymin, xmax, ymax = bounds
+    c0 = int(np.floor((xmin - x0) / a))
+    c1 = int(np.ceil((xmax - x0) / a))
+    r0 = int(np.floor((y0 - ymax) / -e))
+    r1 = int(np.ceil((y0 - ymin) / -e))
+    return x0 + c0 * a, y0 + r0 * e, c1 - c0, r1 - r0
+
+
+def stratified_chunk_sample(strata, fraction: float, min_per_stratum: int, seed: int) -> list:
+    """Random sample of chunk keys, proportional within each stratum, with a floor per stratum.
+
+    strata: pandas Series, index = chunk key, value = stratum label.
+    """
+    if not 0 < fraction <= 1:
+        raise ValueError("fraction must be in (0, 1]")
+    rng = np.random.default_rng(seed)
+    chosen = []
+    for label in sorted(strata.unique(), key=str):
+        keys = sorted(strata.index[strata == label])
+        n = min(len(keys), max(min_per_stratum, int(round(fraction * len(keys)))))
+        chosen += rng.choice(keys, size=n, replace=False).tolist()
+    return sorted(chosen)

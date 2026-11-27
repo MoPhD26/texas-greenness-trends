@@ -123,6 +123,7 @@ export:
   nodata: -32768                   # all bands exported as int16, counts included
   file_dimensions: 32768           # max tile edge in pixels per output GeoTIFF
   filter_buffer_m: 1000            # scenes are filtered by the province outline plus this buffer
+  subsets_on_sample: true          # revision 7: ETM+ only and OLI only on the chunk sample (S batches)
   main_indices: ["evi2", "nirv", "kndvi"]   # all three province wide (revision 6)
   # Single-sensor subsets, folded into the yearly tasks as extra bands (sensitivity check a)
   subsets:
@@ -140,3 +141,10 @@ budget:
   monthly_quota_eecu_h: 1000       # Earth Engine Contributor tier (switched 2026-11-26). The
                                    # project's "Monthly EECU-seconds" quota reads 3,600,000 s.
   stop_at_eecu_h: 850              # stop and ask if planned work would push the month past this
+
+subset_sample:                     # revision 7 candidate: ETM+ only and OLI only on sampled chunks
+  fraction: 0.18                   # share of chunks in each stratum
+  min_per_stratum: 5
+  major_class_share: 0.01          # classes with at least 1% of the province are strata
+  land_cover_year: 2013            # Annual NLCD year used to class the chunks (mid record)
+  seed: 2026

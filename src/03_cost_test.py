@@ -9,6 +9,8 @@ Exports the same tile and year four ways and records EECU-hours per variant:
   D  C plus the single-sensor subset bands folded in (the revision 4 production design)
   E  revision 6 production design: A's computation (3 indices, one pass per count) with the
      outline filter, the cloud skip, the folded subset bands, and the final group harmonization
+  F  E with the single ETM+ to OLI fit instead of the group lookup (diagnostic)
+  G  E without the subset bands (diagnostic)
 
 The tile straddles the province edge, so the outline filter's effect is included.
 
@@ -121,7 +123,11 @@ def main() -> None:
                 cfg, YEAR, fc, filt, harm, indices=["evi2"], subsets=False
             ),
             "D": lambda: gee.annual_composite_single_pass(cfg, YEAR, fc, filt, harm),
-            "E": lambda: gee.annual_composite_production(cfg, YEAR, fc, filt, final),
+            "E": lambda: gee.annual_composite_production(cfg, YEAR, fc, filt, final, subsets=True),
+            "F": lambda: gee.annual_composite_production(
+                cfg, YEAR, fc, filt, dict(final, etm_to_oli_mode="single"), subsets=True
+            ),
+            "G": lambda: gee.annual_composite_production(cfg, YEAR, fc, filt, final, subsets=False),
         }
         variants = {k: builders[k]() for k in args.variants}
         meta = {"year": YEAR, "tile_px": TILE_PX, "upper_left": [ulx, uly], "fraction": frac}
