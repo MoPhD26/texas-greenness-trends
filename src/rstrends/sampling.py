@@ -76,3 +76,17 @@ def stratified_chunk_sample(strata, fraction: float, min_per_stratum: int, seed:
         n = min(len(keys), max(min_per_stratum, int(round(fraction * len(keys)))))
         chosen += rng.choice(keys, size=n, replace=False).tolist()
     return sorted(chosen)
+
+
+def cluster_folds(clusters, k: int, seed: int) -> np.ndarray:
+    """Fold number (0 to k-1) for each point, with every cluster kept whole in one fold.
+
+    Clusters are shuffled and dealt to folds in turn, so fold sizes differ by at most one
+    cluster. Used for cross-validation by harmonization box.
+    """
+    clusters = np.asarray(clusters)
+    u, inv = np.unique(clusters, return_inverse=True)
+    order = np.random.default_rng(seed).permutation(u.size)
+    fold_of = np.empty(u.size, dtype=int)
+    fold_of[order] = np.arange(u.size) % k
+    return fold_of[inv]

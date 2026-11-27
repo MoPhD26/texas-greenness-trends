@@ -47,3 +47,17 @@ def test_stratified_chunk_sample_floor_and_reproducible():
     got = strata[s].value_counts()
     assert got["a"] == 20 and got["b"] == 6 and got["c"] == 4
     assert s == stratified_chunk_sample(strata, 0.2, 5, seed=1)
+
+
+def test_cluster_folds_keep_clusters_whole():
+    import numpy as np
+
+    from rstrends.sampling import cluster_folds
+
+    cid = np.repeat(np.arange(23), 7)
+    f = cluster_folds(cid, 5, seed=1)
+    for c in range(23):
+        assert np.unique(f[cid == c]).size == 1
+    per_fold = np.bincount([f[cid == c][0] for c in range(23)], minlength=5)
+    assert per_fold.max() - per_fold.min() <= 1
+    assert (cluster_folds(cid, 5, seed=1) == f).all()
