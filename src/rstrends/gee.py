@@ -339,15 +339,18 @@ def annual_composite_production(
     return out.select(bands).updateMask(province_mask(fc)).set("year", year)
 
 
-def sample_chunks_fc(cfg: dict, chunks_csv) -> ee.FeatureCollection:
-    """Sampled 512 x 512 chunks (src/03_subset_chunks.py) as planar rectangles."""
+def sample_chunks_fc(cfg: dict, chunks_csv, keys=None) -> ee.FeatureCollection:
+    """Sampled 512 x 512 chunks (src/03_subset_chunks.py) as planar rectangles.
+
+    With keys, returns exactly those chunks (sampled or not) instead of the sample.
+    """
     import pandas as pd
 
     wkt, transform = grid(cfg)
     proj = ee.Projection(wkt)
     a = transform[0]
     c = pd.read_csv(chunks_csv)
-    c = c[c.sampled]
+    c = c[c.key.isin(keys)] if keys is not None else c[c.sampled]
     return ee.FeatureCollection(
         [
             ee.Feature(
