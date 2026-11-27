@@ -147,3 +147,40 @@ def test_median_error_variance_and_lambda():
     assert v[0] == pytest.approx(np.pi / 2 * 0.0004 / 10)
     assert np.isnan(v[1])
     assert harmonize.deming_lambda([1.0, 3.0], [4.0, np.nan]) == pytest.approx(2.0)
+
+
+def test_smooth_in_time_reproduces_cubic_and_respects_weights():
+    years = np.arange(2000, 2012)
+    truth = 1.0 + 0.01 * (years - 2005) - 0.002 * (years - 2005) ** 2
+    se = np.full(years.size, 0.01)
+    assert harmonize.smooth_in_time(years, truth, se) == pytest.approx(truth)
+    noisy = truth.copy()
+    noisy[4] += 0.2
+    se_out = se.copy()
+    se_out[4] = 10.0  # a very uncertain year barely moves the curve
+    sm = harmonize.smooth_in_time(years, noisy, se_out)
+    assert np.max(np.abs(np.delete(sm - truth, 4))) < 0.002
+
+
+def test_oli_coefficient_table_single_and_group():
+    harm = {
+        "etm_to_oli": {"red": [1.0, 0.0], "nir": [1.1, -0.02]},
+        "tm_to_etm": {"2005": {"red": [1.02, -0.003], "nir": [0.99, 0.001]}},
+        "etm_to_oli_by_group": {
+            "classes": {"woody": [41, 43], "herb": [71]},
+            "coefficients": {
+                "woody": {"red": [1.05, -0.01], "nir": [1.2, -0.05]},
+                "herb": {"red": [0.98, 0.002], "nir": [1.05, -0.01]},
+            },
+        },
+    }
+    t = harmonize.oli_coefficient_table(harm, "ETM", 2005)
+    assert t["default"]["nir"] == (1.1, -0.02) and t["classes"] == {}
+    harm["etm_to_oli_mode"] = "group"
+    t = harmonize.oli_coefficient_table(harm, "TM", 2005)
+    assert set(t["classes"]) == {41, 43, 71}
+    s, i = t["classes"][43]["nir"]
+    assert (s, i) == pytest.approx(harmonize.compose((0.99, 0.001), (1.2, -0.05)))
+    assert t["default"]["red"] == pytest.approx(harmonize.compose((1.02, -0.003), (1.0, 0.0)))
+    with pytest.raises(ValueError):
+        harmonize.oli_coefficient_table(harm, "OLI", 2005)

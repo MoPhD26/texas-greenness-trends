@@ -139,6 +139,20 @@ def fit_linear(
     return LinearFit(float(slope), float(intercept), int(xr.size), float(r), slope_ci, intercept_ci)
 
 
+def smooth_in_time(years, values, se, degree: int = 3) -> np.ndarray:
+    """Weighted polynomial in time through yearly estimates (weights 1 / se^2).
+
+    Used as a check on year-by-year coefficients: if Landsat 5 drift is gradual, a smooth
+    curve through the yearly slopes and intercepts should remove the offsets about as well.
+    """
+    t = np.asarray(years, dtype=np.float64)
+    v = np.asarray(values, dtype=np.float64)
+    w = 1.0 / np.asarray(se, dtype=np.float64)
+    tc = (t - t.mean()) / max(t.std(), 1e-12)
+    coef = np.polynomial.polynomial.polyfit(tc, v, degree, w=w)
+    return np.polynomial.polynomial.polyval(tc, coef)
+
+
 def compose(first: tuple[float, float], second: tuple[float, float]) -> tuple[float, float]:
     """Chain two transforms given as (slope, intercept): apply `first`, then `second`.
 
@@ -147,6 +161,38 @@ def compose(first: tuple[float, float], second: tuple[float, float]) -> tuple[fl
     s1, i1 = first
     s2, i2 = second
     return s2 * s1, s2 * i1 + i2
+
+
+def oli_coefficient_table(harm: dict, family: str, year: int) -> dict:
+    """Per-band (slope, intercept) taking TM or ETM+ to OLI, by land cover class if chosen.
+
+    Returns {"default": {band: (s, i)}, "classes": {class: {band: (s, i)}}}. "classes" is empty
+    unless harm["etm_to_oli_mode"] == "group", in which case each class in a group gets that
+    group's ETM+ to OLI line (TM is first taken to ETM+ with the year's line). Classes outside
+    every group use the single fit.
+    """
+    single = harm["etm_to_oli"]
+    if family == "ETM":
+        first = None
+    elif family == "TM":
+        first = harm["tm_to_etm"][str(year)]
+    else:
+        raise ValueError(f"no OLI transform for family {family}")
+
+    def chain(e2o):
+        return {
+            b: tuple(e2o[b]) if first is None else compose(tuple(first[b]), tuple(e2o[b]))
+            for b in ("red", "nir")
+        }
+
+    out = {"default": chain(single), "classes": {}}
+    if harm.get("etm_to_oli_mode", "single") == "group":
+        grp = harm["etm_to_oli_by_group"]
+        for g, classes in grp["classes"].items():
+            line = chain(grp["coefficients"][g])
+            for c in classes:
+                out["classes"][int(c)] = line
+    return out
 
 
 def allocate(class_counts: pd.Series, total: int, floor: int) -> pd.Series:

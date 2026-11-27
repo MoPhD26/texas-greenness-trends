@@ -13,7 +13,7 @@ from typing import Any
 import ee
 
 from rstrends import qa
-from rstrends.harmonize import compose
+from rstrends.harmonize import oli_coefficient_table
 
 INDEX_BANDS = ["evi2", "nirv", "kndvi"]
 
@@ -125,21 +125,40 @@ def apply_linear(img: ee.Image, coeffs: dict[str, tuple[float, float]]) -> ee.Im
     )
 
 
-def to_oli_coefficients(
-    harm: dict | None, family: str, year: int
-) -> dict[str, tuple[float, float]] | None:
+def land_cover_year(cfg: dict, year: int) -> ee.Image:
+    """Annual NLCD class for one year (the latest available year if later)."""
+    ic = ee.ImageCollection(cfg["land_cover_collection"])
+    ic = ic.filter(ee.Filter.lte("year", year)).sort("year", False)
+    return ee.Image(ic.first()).select([0]).rename("lc")
+
+
+def to_oli_coefficients(harm: dict | None, family: str, year: int, cfg: dict | None = None):
     """Per-band (slope, intercept) taking a family's reflectance to OLI-equivalent.
 
     harm layout: {"etm_to_oli": {"red": [s, i], "nir": [s, i]},
-                  "tm_to_etm": {"2000": {"red": [s, i], "nir": [s, i]}, ...}}
+                  "tm_to_etm": {"2000": {"red": [s, i], "nir": [s, i]}, ...},
+                  optional "etm_to_oli_mode": "group" with "etm_to_oli_by_group"}
+    Single mode returns numbers. Group mode returns per-pixel images, chosen by the pixel's
+    Annual NLCD class in that year (needs cfg).
     """
     if harm is None or family == "OLI":
         return None
-    e2o = harm["etm_to_oli"]
-    if family == "ETM":
-        return {b: tuple(e2o[b]) for b in ("red", "nir")}
-    t2e = harm["tm_to_etm"][str(year)]
-    return {b: compose(tuple(t2e[b]), tuple(e2o[b])) for b in ("red", "nir")}
+    table = oli_coefficient_table(harm, family, year)
+    if not table["classes"]:
+        return table["default"]
+    if cfg is None:
+        raise ValueError("group coefficients need cfg for the land cover collection")
+    lc = land_cover_year(cfg, year)
+    classes = sorted(table["classes"])
+    out = {}
+    for b in ("red", "nir"):
+        pair = []
+        for k in (0, 1):
+            vals = [float(table["classes"][c][b][k]) for c in classes]
+            img = lc.remap(classes, vals, float(table["default"][b][k])).rename(f"{b}_{k}")
+            pair.append(img.toFloat())
+        out[b] = tuple(pair)
+    return out
 
 
 # ---------- collections ----------
@@ -189,7 +208,7 @@ def year_observations(cfg: dict, year: int, region: ee.Geometry, harm: dict | No
         col = sensor_collection(cfg, key, year, region)
         if col is None:
             continue
-        coeffs = to_oli_coefficients(harm, cfg["sensors"][key]["family"], year)
+        coeffs = to_oli_coefficients(harm, cfg["sensors"][key]["family"], year, cfg)
         if coeffs is not None:
             col = col.map(lambda im, c=coeffs: apply_linear(im, c))
         parts.append(col)
@@ -286,7 +305,7 @@ def annual_composite_single_pass(
         col = col.filterDate(win[0], win[1])
         if max_cloud is not None:
             col = col.filter(ee.Filter.lte("CLOUD_COVER_LAND", max_cloud))
-        coeffs = to_oli_coefficients(harm, fam, year)
+        coeffs = to_oli_coefficients(harm, fam, year, cfg)
 
         def build(im, fam=fam, coeffs=coeffs):
             o = prep(im, fam, cfg)

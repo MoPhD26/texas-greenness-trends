@@ -270,3 +270,90 @@ All batches fit in Drive at once as plain GeoTIFF (about 76 GB), so batches no l
 2. Submit B1 to B6 together or in two waves, within the month's quota. Earth Engine runs a few tasks at a time per project and queues the rest.
 3. Download each batch as it finishes, while later batches still run. Verify each batch with `03_verify_batch.py`. Nothing is deleted from Drive until its batch passes, and deleting still needs your approval.
 4. Expected cost with the approved cuts: about 600-900 EECU-hours for the main stack (Section 7 and 8). This will be updated from the clean cost test. If the November remainder is not enough, the rest runs after the December 1 reset, within December's 850 stop-and-ask line.
+
+## 12. Harmonization review and export plan (2026-11-27 UTC)
+
+### 12.1 Class offsets after ETM+ to OLI
+
+Detectable trends come from the one-chunk benchmark (27 years of real composites, 260,325 valid pixels, 12 classes with at least 200 pixels), using Weatherhead et al. (1998). Shrub (52) and emergent wetlands (95) are missing from the chunk, so their values are a quick estimate from Landsat 7 yearly medians at the harmonization points. The two sources agree overall (median 0.00101 and 0.00102 EVI2 per year). A step of size d at 2013 turns into a false Theil-Sen trend of 0.055 d per year (OLS gives 0.056 d).
+
+| Class | Offset, single fit (95% CI) | False trend / detectable | Offset, group fit (95% CI) | False trend / detectable |
+|---|---|---|---|---|
+| 21 developed open | -0.002 (-0.005 to 0.001) | 0.09 | -0.003 (-0.007 to 0.001) | 0.17 |
+| 22 developed low | -0.002 (-0.006 to 0.001) | 0.15 | -0.001 (-0.004 to 0.002) | 0.06 |
+| 23 developed medium | -0.008 (-0.013 to -0.003) | 0.75 | -0.001 (-0.005 to 0.003) | 0.09 |
+| 24 developed high | -0.013 (-0.017 to -0.010) | **2.37** | 0.000 (-0.004 to 0.004) | 0.02 |
+| 31 barren | -0.004 (-0.008 to 0.002) | 0.36 | 0.006 (0.001 to 0.010) | 0.59 |
+| 41 deciduous forest | -0.005 (-0.010 to 0.000) | 0.27 | 0.002 (-0.001 to 0.006) | 0.13 |
+| 42 evergreen forest | -0.003 (-0.011 to 0.006) | 0.21 | 0.001 (-0.005 to 0.007) | 0.04 |
+| 43 mixed forest | -0.019 (-0.026 to -0.013) | **1.19** | -0.010 (-0.017 to -0.005) | 0.66 |
+| 52 shrub (sample estimate) | 0.007 (0.002 to 0.012) | 0.54 | 0.005 (0.001 to 0.010) | 0.41 |
+| 71 grassland | 0.009 (0.006 to 0.012) | 0.48 | 0.005 (0.003 to 0.008) | 0.30 |
+| 81 pasture and hay | -0.003 (-0.006 to -0.001) | 0.14 | -0.005 (-0.008 to -0.003) | 0.24 |
+| 82 cropland | 0.010 (0.005 to 0.016) | 0.38 | 0.006 (0.001 to 0.011) | 0.21 |
+| 90 woody wetlands | -0.012 (-0.019 to -0.006) | 0.65 | -0.003 (-0.008 to 0.002) | 0.17 |
+| 95 emergent wetlands (sample estimate) | -0.011 (-0.017 to 0.007) | 0.56 | -0.015 (-0.021 to 0.003) | 0.76 |
+
+Recommendation: **group fits**. The single fit fails the rule "well below the detectable trend" in two classes and is half or more of it in four more. The group fits bring every class to 0.76 or less, and 11 of 14 below 0.45. Mixed forest keeps the largest remaining offset (-0.010), which the OLI only subset check will watch. A 64 x 64 pixel test in Earth Engine confirmed the group transform works per pixel from the Annual NLCD class of each year, with shifts in the expected direction for each class.
+
+### 12.2 TM to ETM+ fits (minimum 6 clear observations)
+
+| Year | Points (of 10,005) | Boxes | Red RMA slope | NIR RMA slope (95% CI) | NIR R2 | Raw EVI2 offset (95% CI) | After |
+|---|---|---|---|---|---|---|---|
+| 2000 | 6,954 | 160 | 1.031 | 0.973 (0.942-1.013) | 0.67 | -0.015 (-0.022 to -0.009) | 0.000 |
+| 2001 | 7,461 | 174 | 1.046 | 0.957 (0.920-0.995) | 0.70 | +0.014 (0.011 to 0.018) | 0.000 |
+| 2002 | 5,385 | 140 | 1.020 | 0.988 (0.943-1.034) | 0.63 | -0.003 (-0.008 to 0.002) | 0.000 |
+| 2003 | 4,977 | 143 | 0.985 | 1.029 (0.984-1.080) | 0.62 | -0.007 (-0.013 to -0.001) | 0.000 |
+| 2004 | 4,376 | 136 | 1.011 | **1.098 (1.030-1.166)** | 0.48 | -0.022 (-0.030 to -0.014) | 0.000 |
+| 2005 | 6,885 | 180 | 1.018 | 0.998 (0.963-1.032) | 0.64 | +0.003 (-0.001 to 0.007) | 0.000 |
+| 2006 | 7,393 | 185 | 1.016 | 0.956 (0.914-1.001) | 0.66 | -0.001 (-0.006 to 0.004) | 0.000 |
+| 2007 | 3,624 | 118 | 1.047 | 0.996 (0.947-1.047) | 0.57 | +0.011 (0.003 to 0.019) | 0.000 |
+| 2008 | 6,396 | 170 | 1.029 | 1.036 (0.991-1.093) | 0.45 | +0.015 (0.009 to 0.021) | 0.000 |
+| 2009 | 5,853 | 152 | 1.078 | 1.007 (0.965-1.050) | 0.51 | +0.002 (-0.004 to 0.009) | 0.000 |
+| 2010 | 6,797 | 175 | 1.022 | 1.038 (0.974-1.111) | 0.62 | -0.007 (-0.011 to -0.003) | 0.000 |
+| 2011 | 8,507 | 192 | 1.063 | 0.965 (0.940-0.994) | 0.75 | +0.005 (0.002 to 0.008) | 0.000 |
+
+Red R2 is 0.82-0.94 in every year. 2004 NIR still stands out: it is the only year whose NIR slope interval lies above 1, and it has the largest raw offset. It falls in the fast 2003-2007 Landsat 5 drift period, so it is plausible rather than an artifact. The smooth-in-time check (cubic in slope and level) leaves offsets close to the raw ones, because the raw offsets change sign from year to year. Yearly fits stay primary.
+
+By class within single years, offsets after the TM to ETM+ transform reach 0.03-0.06 in a few small groups (mixed forest, wetlands, 60-470 points). These rest on few points per year and enter only the TM share of 2000-2011 composites.
+
+### 12.3 Clean cost test (one 3,072 x 3,072 pixel tile, 2015, first attempts)
+
+| Variant | EECU-hours | Ratio to A |
+|---|---|---|
+| A: pilot design, 3 indices, five passes, bounding box filter | 0.519 | 1.00 |
+| B: outline filter, cloud skip, single pass, 3 indices | 0.868 | 1.67 |
+| C: B with EVI2 only | 0.541 | 1.04 |
+| D: C plus ETM+ only and OLI only bands (production) | 0.672 | 1.29 |
+
+The single pass and dropping NIRv and kNDVI did not reduce cost on this tile, and B cost more than A. The tile lies inside the scene footprints, so the outline filter cannot save anything here. The real saving in D is folding the subsets in: the old design needed separate subset exports, about 1.5 to 2 times A for 2000-2019. The outline filter and cloud skip still remove about 21% of scenes province wide (scene counts).
+
+Projection per year: the pilot cost (21.35 EECU-hours for 488 scenes) scaled by each year's scene count after the outline filter and cloud skip, times 1.29 (2000-2019, D) or 1.04 (2020-2026, C).
+
+| Batch | Years | EECU-hours |
+|---|---|---|
+| B1 | 2000-2004 | 214 |
+| B2 | 2005-2009 | 224 |
+| B3 | 2010-2014 | 205 |
+| B4 | 2015-2019 | 233 |
+| B5 | 2020-2024 | 157 |
+| B6 | 2025-2026 | 80 |
+| Total | | about 1,110 (about 1,420 if the outline filter saves nothing) |
+
+Two-sensor years cost about 40-49, single-sensor years (2012, 2020, 2021) about 18-22. The group harmonization adds a class lookup per observation, which is not yet measured.
+
+### 12.4 Export plan and budget
+
+| Item | EECU-hours |
+|---|---|
+| November spent (interactive 151.2, batch 86.6) | 237.8 |
+| Committed | 0 |
+| Remaining under the 850 stop line | about 612 |
+
+Proposed waves, once the coefficients are final:
+
+1. November: B4 first (the costliest design, 2 sensors with both subsets). Check the EECU of its first finished year against the projection (about 46) before adding more. Then B1 and B6. Total about 527, leaving about 85 under the 850 line.
+2. December (after the reset): B2, B3, B5, about 586.
+3. Download and verify each batch as it lands, without overviews (about 76 GB in Drive at peak if nothing is cleared).
+
+If the first year comes in more than 20% above projection, I stop and re-plan before submitting more.

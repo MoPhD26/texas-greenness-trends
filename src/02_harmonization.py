@@ -18,7 +18,8 @@ Steps:
               Roy et al. 2016 comparison). Cluster-bootstrap confidence intervals. Fit statistics
               and the EVI2 offset each transform removes, overall and by land cover class.
               Writes a draft only.
-  --finalize  promote the reviewed draft to coefficients.json, which the exports read
+  --finalize  promote the reviewed draft to coefficients.json, which the exports read.
+              Needs --mode single or --mode group (ETM+ to OLI per land cover group)
 
 Run:
   conda run -n rs-trends python src/02_harmonization.py --clusters
@@ -47,6 +48,7 @@ from rstrends.harmonize import (
     fit_linear,
     fit_stats,
     median_error_variance,
+    smooth_in_time,
 )
 from rstrends.sampling import pick_boxes
 
@@ -84,6 +86,11 @@ def main() -> None:
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--fit", action="store_true", help="fit and write draft coefficients")
     ap.add_argument("--finalize", action="store_true", help="promote the reviewed draft")
+    ap.add_argument(
+        "--mode",
+        choices=["single", "group"],
+        help="with --finalize: one ETM+ to OLI line, or one per land cover group",
+    )
     args = ap.parse_args()
 
     cfg = load_config()
@@ -220,6 +227,9 @@ def main() -> None:
 
     if args.finalize:
         draft = json.loads((out_dir / "coefficients_draft.json").read_text(encoding="utf-8"))
+        if args.mode is None:
+            raise SystemExit("--finalize needs --mode single or --mode group")
+        draft["etm_to_oli_mode"] = args.mode
         draft["status"] = "final"
         draft["finalized_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (out_dir / "coefficients.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
@@ -238,18 +248,32 @@ def fit(cfg: dict, root, out_dir, jobs) -> None:
 
     fit_rows, class_rows, offset_rows = [], [], []
     draft: dict = {"etm_to_oli": {}, "tm_to_etm": {}}
+    tm_data: dict[int, pd.DataFrame] = {}
+    kept_rows = []
 
     for name, (_, _, src, tgt, years) in jobs.items():
         df = pd.read_csv(files[name][0])
         n_all = len(df)
         need = stat_columns(src, tgt)
         df = df.dropna(subset=need)
-        df = df[(df[f"{src}_n"] >= nmin) & (df[f"{tgt}_n"] >= nmin)]
+        n_req = h["min_clear_obs_per_sensor_tm"] if src == "tm" else nmin
+        df = df[(df[f"{src}_n"] >= n_req) & (df[f"{tgt}_n"] >= n_req)]
         meds = [f"{p}_{b}" for p in (src, tgt) for b in ("red", "nir")]
         df = df[(df[meds] != MISSING).all(axis=1)]
         label = f"{years[0]}-{years[-1]}" if len(years) > 1 else str(years[0])
         transform = f"{src}_to_{tgt}"
-        print(f"     {name}: {len(df)} of {n_all} points have >= {nmin} clear obs per sensor")
+        print(f"     {name}: {len(df)} of {n_all} points have >= {n_req} clear obs per sensor")
+        kept_rows.append(
+            {
+                "job": name,
+                "min_obs": n_req,
+                "points": len(df),
+                "of": n_all,
+                "clusters": df["cid"].nunique(),
+            }
+        )
+        if src == "tm":
+            tm_data[years[0]] = df
 
         fits: dict[str, dict[str, LinearFit]] = {"rma": {}, "deming": {}, "ols": {}}
         for band in ("red", "nir"):
@@ -338,12 +362,31 @@ def fit(cfg: dict, root, out_dir, jobs) -> None:
         if transform == "etm_to_oli":
             draft["etm_to_oli"] = coeffs["rma"]
             draft["etm_to_oli_checks"] = {m: coeffs[m] for m in ("deming", "ols")}
+            # Sensitivity and candidate: one RMA fit per land cover group (src/02b_class_offsets.py)
+            by_group = {}
+            for gname, classes in h["class_groups"].items():
+                gd = df[df.lc.isin(classes)]
+                by_group[gname] = {
+                    b: list(
+                        (lambda f: (f.slope, f.intercept))(
+                            fit_linear(gd[f"etm_{b}"], gd[f"oli_{b}"], "rma")
+                        )
+                    )
+                    for b in ("red", "nir")
+                }
+            draft["etm_to_oli_by_group"] = {
+                "classes": {g: list(c) for g, c in h["class_groups"].items()},
+                "coefficients": by_group,
+            }
         else:
             draft["tm_to_etm"][label] = coeffs["rma"]
             draft.setdefault("tm_to_etm_checks", {})[label] = {
                 m: coeffs[m] for m in ("deming", "ols")
             }
 
+    smooth = smooth_check(fit_rows, tm_data)
+    smooth.to_csv(out_dir / "tm_etm_smooth_check.csv", index=False)
+    pd.DataFrame(kept_rows).to_csv(out_dir / "points_kept.csv", index=False)
     pd.DataFrame(fit_rows).to_csv(out_dir / "fit_table.csv", index=False)
     pd.DataFrame(class_rows).to_csv(out_dir / "fit_by_class.csv", index=False)
     offsets = pd.DataFrame(offset_rows)
@@ -351,8 +394,9 @@ def fit(cfg: dict, root, out_dir, jobs) -> None:
     draft["method"] = "rma"
     draft["status"] = "draft, not reviewed"
     draft["note"] = (
-        f"clustered sample, points with >= {nmin} clear obs per sensor, common date window. "
-        "ETM+ to OLI pooled 2013-2017 per-point medians. TM to ETM+ per year."
+        f"clustered sample, common date window. ETM+ to OLI pooled 2013-2017 per-point "
+        f"medians, >= {nmin} clear obs per sensor. TM to ETM+ per year, "
+        f">= {h['min_clear_obs_per_sensor_tm']} clear obs per sensor."
     )
     out_path = out_dir / "coefficients_draft.json"
     out_path.write_text(json.dumps(draft, indent=2), encoding="utf-8")
@@ -376,7 +420,51 @@ def fit(cfg: dict, root, out_dir, jobs) -> None:
     ]
     print(pd.DataFrame(fit_rows)[cols].round(4).to_string(index=False))
     print(offsets[offsets.group == "all"].round(4).to_string(index=False))
+    print(pd.DataFrame(kept_rows).to_string(index=False))
+    print(smooth.round(4).to_string(index=False))
     print(f"ok   wrote {out_path} (draft, exports will not use it)")
+
+
+def smooth_check(fit_rows, tm_data) -> pd.DataFrame:
+    """Option 3 check: TM to ETM+ slope and intercept as smooth (cubic) functions of time.
+
+    Slope and intercept are strongly correlated, so each yearly line is rewritten as
+    level + slope * (x - xbar), with xbar the mean TM reflectance over all years. The level
+    and the slope are then smoothed separately (weights from their uncertainty), and each
+    year's EVI2 offset is recomputed with the smoothed line.
+    """
+    fr = pd.DataFrame(fit_rows)
+    fr = fr[(fr["transform"] == "tm_to_etm") & (fr.method == "rma")].copy()
+    fr["year"] = fr.years.astype(int)
+    pooled = pd.concat(tm_data.values())
+    sm = {}
+    for band, g in fr.groupby("band"):
+        g = g.sort_values("year")
+        xbar = float(pooled[f"tm_{band}"].mean())
+        level = g.intercept + g.slope * xbar
+        se_slope = (g.slope_hi - g.slope_lo) / 3.92
+        se_level = g.rmse / np.sqrt(g.n_clusters)
+        s_sl = smooth_in_time(g.year, g.slope, se_slope)
+        s_lv = smooth_in_time(g.year, level, se_level)
+        sm[band] = {y: (sl, lv - sl * xbar) for y, sl, lv in zip(g.year, s_sl, s_lv, strict=True)}
+    rows = []
+    for year, df in sorted(tm_data.items()):
+        yr = {b: fr[(fr.year == year) & (fr.band == b)].iloc[0] for b in ("red", "nir")}
+        f_y = [LinearFit(yr[b].slope, yr[b].intercept, 0, np.nan) for b in ("red", "nir")]
+        f_s = [LinearFit(*sm[b][year], 0, np.nan) for b in ("red", "nir")]
+        rows.append(
+            {
+                "year": year,
+                "red_slope": f_y[0].slope,
+                "red_slope_smooth": f_s[0].slope,
+                "nir_slope": f_y[1].slope,
+                "nir_slope_smooth": f_s[1].slope,
+                "offset_none": float(np.mean(evi2_offset(df, "tm", "etm"))),
+                "offset_yearly": float(np.mean(evi2_offset(df, "tm", "etm", *f_y))),
+                "offset_smooth": float(np.mean(evi2_offset(df, "tm", "etm", *f_s))),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":

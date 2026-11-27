@@ -52,6 +52,11 @@ harmonization:
   exclude_classes: [11, 12]        # open water, perennial ice and snow
   min_points_per_class: 300        # floor in the area-proportional stratified sample
   min_clear_obs_per_sensor: 10     # a point enters a fit only if both sensors have this many
+  min_clear_obs_per_sensor_tm: 6   # TM to ETM+ years only (Landsat 7 scan gaps cut clear counts)
+  class_groups:                    # sensitivity check: ETM+ to OLI fitted per group
+    woody: [41, 42, 43, 52, 90]
+    herbaceous: [71, 81, 82, 95]
+    developed: [21, 22, 23, 24, 31]
   n_boot: 1000                     # cluster bootstrap resamples for confidence intervals
   seed: 2026
   # Roy et al. (2016) Table 2, ETM+ to OLI surface reflectance (OLI = intercept + slope * ETM+).
